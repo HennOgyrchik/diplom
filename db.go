@@ -155,3 +155,21 @@ func GetTag(memberId int64) (tag string, err error) {
 	err = stmt.QueryRow(memberId).Scan(&tag)
 	return
 }
+
+func IsAdmin(memberId int64) (result bool, err error) {
+	result = false
+
+	db, err := dbConnection()
+	if err != nil {
+		return
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("select admin from members m  where member=$1")
+	if err != nil {
+		return
+	}
+
+	err = stmt.QueryRow(memberId).Scan(&result)
+	return
+}

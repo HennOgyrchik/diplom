@@ -120,6 +120,19 @@ func startMenu(bot *tgbotapi.BotAPI, chatId int64) {
 }
 
 func showMenu(bot *tgbotapi.BotAPI, chatId int64) {
+	ok, err := db.IsMember(chatId)
+	if err != nil {
+		return
+	}
+	if !ok {
+		msg := tgbotapi.NewMessage(chatId, "Вы не являетесь участником фонда. Создайте новый фонд или присоединитесь к существующему.")
+		if _, err = bot.Send(msg); err != nil {
+			return
+		}
+		startMenu(bot, chatId)
+		return
+	}
+
 	var menuKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("Баланс", "баланс"),
@@ -130,11 +143,22 @@ func showMenu(bot *tgbotapi.BotAPI, chatId int64) {
 			tgbotapi.NewInlineKeyboardButtonData("Покинуть фонд", "3"),
 		),
 	)
-	//adminMenuKeyboard := append(menuKeyboard.InlineKeyboard, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("админские функции", ""),) )
 
 	msg := tgbotapi.NewMessage(chatId, "Приветствую! Выберите один из вариантов")
+
+	ok, err = db.IsAdmin(chatId)
+
+	if err != nil {
+		return
+	}
+	if ok {
+		fmt.Println(1)
+		menuKeyboard.InlineKeyboard = append(menuKeyboard.InlineKeyboard, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("админские функции", "9")))
+	}
+
 	msg.ReplyMarkup = &menuKeyboard
-	if _, err := bot.Send(msg); err != nil {
+	if _, err = bot.Send(msg); err != nil {
+		fmt.Println(err)
 		return
 	}
 }
