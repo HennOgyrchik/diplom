@@ -88,7 +88,7 @@ func commandSwitcher(bot *tgbotapi.BotAPI, msg *tgbotapi.MessageConfig, query st
 	case "create":
 		confirmationCreationNewFund(bot, msg.ChatID)
 	case "join":
-		test(bot, msg.ChatID)
+		join(bot, msg.ChatID)
 	case "Создать новый фонд":
 		creatingNewFund(bot, msg.ChatID)
 
@@ -101,13 +101,42 @@ func commandSwitcher(bot *tgbotapi.BotAPI, msg *tgbotapi.MessageConfig, query st
 
 }
 
-func test(bot *tgbotapi.BotAPI, chatId int64) {
-	msg := tgbotapi.NewMessage(chatId, "Тестовая функция")
-	if _, err := bot.Send(msg); err != nil {
+func join(bot *tgbotapi.BotAPI, chatId int64) {
+	msg := tgbotapi.NewMessage(chatId, "")
+	ok, err := db.IsMember(chatId)
+	if err != nil {
+		return
+	}
+	if ok {
+		msg.Text = "Вы уже являетесь участником фонда"
+		return
+	}
+	msg.Text = "Введите тег фонда. Если у вас нет тега, запросите его у администратора фонда."
+	if _, err = bot.Send(msg); err != nil {
 		fmt.Println(err)
 		return
 	}
-	fmt.Println(chatId)
+	tag := waitingResponce(chatId)
+
+	ok, err = db.ExistsFund(tag)
+	if err != nil {
+		return
+	}
+	if !ok {
+		msg.Text = "Фонд с таким тегом не найден."
+	} else {
+		err = db.AddMember(tag, chatId, false)
+		if err != nil {
+			return
+		}
+		msg.Text = "Вы успешно присоединились к фонду."
+	}
+
+	if _, err = bot.Send(msg); err != nil {
+		fmt.Println(err)
+		return
+	}
+
 }
 
 func confirmationCreationNewFund(bot *tgbotapi.BotAPI, chatId int64) {
@@ -117,7 +146,7 @@ func confirmationCreationNewFund(bot *tgbotapi.BotAPI, chatId int64) {
 		return
 	}
 	if ok {
-		msg.Text = "Вы уже являетесь участником фонда" //подумать куда выйти/ в какое меню
+		msg.Text = "Вы уже являетесь участником фонда"
 	} else {
 		msg.Text = "Вы уверены, что хотите создать новый чат?"
 		var numericKeyboard = tgbotapi.NewInlineKeyboardMarkup(

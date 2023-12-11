@@ -96,3 +96,28 @@ func IsMember(memberId int64) (result bool, err error) {
 	result = true
 	return
 }
+
+func ExistsFund(tag string) (result bool, err error) {
+	result = false
+
+	db, err := dbConnection()
+	if err != nil {
+		return
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("select count(*) from funds where tag=$1")
+	if err != nil {
+		return
+	}
+
+	var count int
+	err = stmt.QueryRow(tag).Scan(&count)
+
+	if (err != nil) || (count == 0) {
+		return
+	}
+
+	result = true
+	return
+}
