@@ -66,32 +66,19 @@ func getToken() string {
 }
 
 func commandSwitcher(bot *tgbotapi.BotAPI, msg *tgbotapi.MessageConfig, query string) {
-	var numericKeyboard = tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Создать", "create"),
-			tgbotapi.NewInlineKeyboardButtonData("Присоединиться", "join"),
-		),
-	)
 	switch query {
-
 	case "start":
-		msg.Text = "Приветствую! Выберите один из вариантов"
-		msg.ReplyMarkup = &numericKeyboard
-		if _, err := bot.Send(msg); err != nil {
-			panic(err)
-		}
+		startMenu(bot, msg.ChatID)
 	case "menu":
-		msg.Text = "Какое-то кнопочное меню"
-		if _, err := bot.Send(msg); err != nil {
-			panic(err)
-		}
-	case "create":
+		showMenu(bot, msg.ChatID)
+	case "создать":
 		confirmationCreationNewFund(bot, msg.ChatID)
-	case "join":
+	case "присоединиться":
 		join(bot, msg.ChatID)
-	case "Создать новый фонд":
+	case "создать новый фонд":
 		creatingNewFund(bot, msg.ChatID)
-
+	case "баланс":
+		showBalance(bot, msg.ChatID)
 	default:
 		msg.Text = "Я не знаю такую команду"
 		if _, err := bot.Send(msg); err != nil {
@@ -99,6 +86,57 @@ func commandSwitcher(bot *tgbotapi.BotAPI, msg *tgbotapi.MessageConfig, query st
 		}
 	}
 
+}
+
+func showBalance(bot *tgbotapi.BotAPI, chatId int64) {
+	tag, err := db.GetTag(chatId)
+	if err != nil {
+		return
+	}
+	balance, err := db.ShowBalance(tag)
+	if err != nil {
+		return
+	}
+	msg := tgbotapi.NewMessage(chatId, fmt.Sprintf("Текущий баланс: %.2f руб", balance))
+	if _, err := bot.Send(msg); err != nil {
+		return
+	}
+
+}
+
+func startMenu(bot *tgbotapi.BotAPI, chatId int64) {
+	var startKeyboard = tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Создать", "создать"),
+			tgbotapi.NewInlineKeyboardButtonData("Присоединиться", "присоединиться"),
+		),
+	)
+
+	msg := tgbotapi.NewMessage(chatId, "Приветствую! Выберите один из вариантов")
+	msg.ReplyMarkup = &startKeyboard
+	if _, err := bot.Send(msg); err != nil {
+		return
+	}
+}
+
+func showMenu(bot *tgbotapi.BotAPI, chatId int64) {
+	var menuKeyboard = tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Баланс", "баланс"),
+			tgbotapi.NewInlineKeyboardButtonData("Оплатить", "1"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Статистика", "2"),
+			tgbotapi.NewInlineKeyboardButtonData("Покинуть фонд", "3"),
+		),
+	)
+	//adminMenuKeyboard := append(menuKeyboard.InlineKeyboard, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("админские функции", ""),) )
+
+	msg := tgbotapi.NewMessage(chatId, "Приветствую! Выберите один из вариантов")
+	msg.ReplyMarkup = &menuKeyboard
+	if _, err := bot.Send(msg); err != nil {
+		return
+	}
 }
 
 func join(bot *tgbotapi.BotAPI, chatId int64) {
@@ -109,6 +147,9 @@ func join(bot *tgbotapi.BotAPI, chatId int64) {
 	}
 	if ok {
 		msg.Text = "Вы уже являетесь участником фонда"
+		if _, err = bot.Send(msg); err != nil {
+			fmt.Println(err)
+		}
 		return
 	}
 	msg.Text = "Введите тег фонда. Если у вас нет тега, запросите его у администратора фонда."
@@ -151,7 +192,7 @@ func confirmationCreationNewFund(bot *tgbotapi.BotAPI, chatId int64) {
 		msg.Text = "Вы уверены, что хотите создать новый чат?"
 		var numericKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("Да", "Создать новый фонд"),
+				tgbotapi.NewInlineKeyboardButtonData("Да", "создать новый фонд"),
 				tgbotapi.NewInlineKeyboardButtonData("Нет", "start"),
 			),
 		)

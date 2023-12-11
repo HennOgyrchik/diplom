@@ -121,3 +121,37 @@ func ExistsFund(tag string) (result bool, err error) {
 	result = true
 	return
 }
+
+func ShowBalance(tag string) (balance float64, err error) {
+	balance = 0.0
+
+	db, err := dbConnection()
+	if err != nil {
+		return
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("select balance from funds where tag=$1")
+	if err != nil {
+		return
+	}
+	err = stmt.QueryRow(tag).Scan(&balance)
+	return
+}
+
+func GetTag(memberId int64) (tag string, err error) {
+	tag = ""
+	db, err := dbConnection()
+	if err != nil {
+		return
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("select tag_fund from members where member=$1")
+	if err != nil {
+		return
+	}
+
+	err = stmt.QueryRow(memberId).Scan(&tag)
+	return
+}
