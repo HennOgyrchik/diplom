@@ -57,18 +57,18 @@ func DoesTagExist(tag string) (result bool, err error) {
 	return
 }
 
-func AddMember(tag string, memberId int64, isAdmin bool) error {
+func AddMember(tag string, memberId int64, isAdmin bool, login string) error {
 	db, err := dbConnection()
 	if err != nil {
 		return err
 	}
 	defer db.Close()
 
-	stmt, err := db.Prepare("insert into members (tag_fund,member,admin) values ($1,$2,$3)")
+	stmt, err := db.Prepare("insert into members (tag_fund,member_id,admin,login) values ($1,$2,$3,$4)")
 	if err != nil {
 		return err
 	}
-	_ = stmt.QueryRow(tag, memberId, isAdmin)
+	_ = stmt.QueryRow(tag, memberId, isAdmin, login)
 	return err
 }
 
@@ -81,7 +81,7 @@ func IsMember(memberId int64) (result bool, err error) {
 	}
 	defer db.Close()
 
-	stmt, err := db.Prepare("select count(*) from members where member=$1")
+	stmt, err := db.Prepare("select count(*) from members where member_id=$1")
 	if err != nil {
 		return
 	}
@@ -147,7 +147,7 @@ func GetTag(memberId int64) (tag string, err error) {
 	}
 	defer db.Close()
 
-	stmt, err := db.Prepare("select tag_fund from members where member=$1")
+	stmt, err := db.Prepare("select tag_fund from members where member_id=$1")
 	if err != nil {
 		return
 	}
@@ -165,11 +165,120 @@ func IsAdmin(memberId int64) (result bool, err error) {
 	}
 	defer db.Close()
 
-	stmt, err := db.Prepare("select admin from members m  where member=$1")
+	stmt, err := db.Prepare("select admin from members m  where member_id=$1")
 	if err != nil {
 		return
 	}
 
 	err = stmt.QueryRow(memberId).Scan(&result)
+	return
+}
+
+func CreateCashCollection(tag string, sum float64, comment string, purpose string) (id int, err error) {
+	id = -1
+	db, err := dbConnection()
+	if err != nil {
+		return
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("insert into cash_collections (tag, sum, status, comment,purpose) values ($1,$2,$3,$4,$5) RETURNING id")
+	if err != nil {
+		return
+	}
+	err = stmt.QueryRow(tag, sum, "открыт", comment, purpose).Scan(&id)
+	return
+
+}
+
+func SelectMembers(tag string) (members []int64, err error) {
+	db, err := dbConnection()
+	if err != nil {
+		return
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("select member_id from members where tag_fund =$1")
+	if err != nil {
+		return
+	}
+
+	rows, err := stmt.Query(tag)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var member int64
+		if err = rows.Scan(&member); err != nil {
+			return
+		}
+		members = append(members, member)
+	}
+	return
+}
+
+func InfoAboutCashCollection(idCollection int) (sum float64, purpose string, err error) {
+	db, err := dbConnection()
+	if err != nil {
+		return
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("select sum, purpose from cash_collections where id =$1")
+	if err != nil {
+		return
+	}
+
+	err = stmt.QueryRow(id_collection).Scan(&sum, &purpose)
+	return
+}
+
+func InsertInTransactions(cashCollectionId int, sum float64, typeOfTransaction string, status string, pathToReceipt string, memberId int64) (id int, err error) {
+	id = -1
+	db, err := dbConnection()
+	if err != nil {
+		return
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("insert into transactions (cash_collection_id, sum, type, status,receipt, member_id) values ($1,$2,$3,$4,$5,$6) RETURNING id")
+	if err != nil {
+		return
+	}
+	_ = stmt.QueryRow(cashCollectionId, sum, typeOfTransaction, status, pathToReceipt, memberId).Scan(&id)
+	return
+}
+
+func GetAdminFund(tag string) (memberId int64, err error) {
+	db, err := dbConnection()
+	if err != nil {
+		return
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("select member_id from members where tag_fund = $1 and admin = true")
+	if err != nil {
+		return
+	}
+
+	err = stmt.QueryRow(tag).Scan(&memberId)
+	return
+}
+
+func InfoAboutTransaction(idTransaction int) (sum float64, purpose string, err error) {
+	db, err := dbConnection()
+	if err != nil {
+		return
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("select sum, purpose from cash_collections where id =$1")
+	if err != nil {
+		return
+	}
+
+	err = stmt.QueryRow(idTransaction).Scan(&sum, &purpose)
 	return
 }
