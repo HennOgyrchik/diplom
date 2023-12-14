@@ -3,14 +3,18 @@ package main
 import (
 	"fmt"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"io"
 	"io/ioutil"
 	"log"
 	"math/rand"
+	"net/http"
 	"os"
+	"path"
 	db "project1"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var memory = map[int64]chan string{}
@@ -33,6 +37,11 @@ func main() {
 
 	for update := range updates {
 		if update.Message != nil {
+			if update.Message.Document != nil {
+				downloadDocument(bot, update)
+
+			}
+
 			if usrChan, ok := memory[update.Message.Chat.ID]; ok {
 				usrChan <- update.Message.Text
 			} else {
@@ -49,6 +58,42 @@ func main() {
 			}
 		}
 	}
+}
+
+func downloadDocument(bot *tgbotapi.BotAPI, update tgbotapi.Update) {
+	file_id := update.Message.Document.FileID
+
+	_, err := bot.GetFile(tgbotapi.FileConfig{FileID: file_id})
+	if err != nil {
+		fmt.Println(2, err)
+		return
+	}
+
+	path_file, _ := bot.GetFileDirectURL(file_id)
+	fmt.Println(path_file)
+
+	filename := path.Base(path_file)
+	fmt.Println("Downloading ", path_file, " to ", filename)
+
+	resp, err := http.Get(path_file)
+	if err != nil {
+		fmt.Println(5, err)
+		return
+	}
+
+	f, err := os.Create(filename)
+	if err != nil {
+		fmt.Println(4, err)
+		return
+	}
+
+	_, err = io.Copy(f, resp.Body)
+	if err != nil {
+		fmt.Println(6, err)
+		return
+	}
+	f.Close()
+	resp.Body.Close()
 }
 
 func getToken() string {
@@ -90,7 +135,7 @@ func commandSwitcher(bot *tgbotapi.BotAPI, msg tgbotapi.MessageConfig, query str
 	case cmd == "новый сбор":
 		createCashCollection(bot, msg.ChatID, update)
 	case cmd == "новое списание":
-		debitingFunds(bot, msg.ChatID, update)
+		createDebitingFunds(bot, msg.ChatID, update)
 	case paymentPat.MatchString(cmd): // оплата
 		cashCollectionId, err := strconv.Atoi(strings.Split(cmd, " ")[1])
 		if err != nil {
@@ -124,8 +169,44 @@ func commandSwitcher(bot *tgbotapi.BotAPI, msg tgbotapi.MessageConfig, query str
 
 }
 
-func debitingFunds(bot *tgbotapi.BotAPI, id int64, update tgbotapi.Update) {
+func createDebitingFunds(bot *tgbotapi.BotAPI, chatId int64, update tgbotapi.Update) {
+	sum, err := getFloatFromUser(bot, chatId, "Введите сумму списания.")
+	if err != nil {
+		return
+	}
 
+	msg := tgbotapi.NewMessage(chatId, "Укажите причину списания")
+	if _, err = bot.Send(msg); err != nil {
+		return
+	}
+
+	purpose := waitingResponce(chatId)
+
+	tag, err := db.GetTag(chatId)
+	if err != nil {
+		return
+	}
+
+	y, m, d := time.Now().Date()
+
+	id, err := db.CreateCashCollection(tag, sum, "закрыт", fmt.Sprintf("Инициатор: %s", update.FromChat().UserName), purpose, fmt.Sprintf("%d-%d-%d", y, m, d))
+	if err != nil {
+		msg.Text = "Произошла ошибка"
+		_, _ = bot.Send(msg)
+		return
+	}
+
+	msg.Text = "Прикрепите чек файлом"
+	if _, err = bot.Send(msg); err != nil {
+		return
+	}
+
+	_ = waitingResponce(chatId)
+
+	msg.Text = "Списание оформлено. Все участники будут проинформированы"
+	_, _ = bot.Send(msg)
+
+	fmt.Println(id)
 }
 
 func changeStatusOfTransaction(bot *tgbotapi.BotAPI, chatId int64, idTransaction int, status string) {
@@ -149,7 +230,7 @@ func paymentChangeStatusNotification(bot *tgbotapi.BotAPI, idTransaction int) {
 }
 
 func payment(bot *tgbotapi.BotAPI, chatId int64, cashCollectionId int) {
-	sum, err := getFloatFromUser(bot, chatId, "Введите сумму пополнения без указания валюты. В качестве разделителя используйте точку.")
+	sum, err := getFloatFromUser(bot, chatId, "Введите сумму пополнения.")
 	if err != nil {
 		return
 	}
@@ -220,26 +301,12 @@ func getFloatFromUser(bot *tgbotapi.BotAPI, chatId int64, message string) (sum f
 }
 
 func createCashCollection(bot *tgbotapi.BotAPI, chatId int64, update tgbotapi.Update) {
-	var err error
-
-	msg := tgbotapi.NewMessage(chatId, "Введите сумму сбора с одного участника без указания валюты. В качестве разделителя используйте точку.")
-	if _, err = bot.Send(msg); err != nil {
+	sum, err := getFloatFromUser(bot, chatId, "Введите сумму сбора с одного участника.")
+	if err != nil {
 		return
 	}
 
-	var sum float64
-	for {
-		sum, err = strconv.ParseFloat(waitingResponce(chatId), 64)
-		if err != nil {
-			msg.Text = "Попробуйте еще раз"
-			if _, err = bot.Send(msg); err != nil {
-				return
-			}
-			continue
-		}
-		break
-	}
-	msg.Text = "Укажите назначение сбора"
+	msg := tgbotapi.NewMessage(chatId, "Укажите назначение сбора")
 	if _, err = bot.Send(msg); err != nil {
 		return
 	}
@@ -251,7 +318,7 @@ func createCashCollection(bot *tgbotapi.BotAPI, chatId int64, update tgbotapi.Up
 		return
 	}
 
-	id, err := db.CreateCashCollection(tag, sum, fmt.Sprintf("Инициатор: %s", update.FromChat().UserName), purpose)
+	id, err := db.CreateCashCollection(tag, sum, "открыт", fmt.Sprintf("Инициатор: %s", update.FromChat().UserName), purpose, "")
 	if err != nil {
 		msg.Text = "Произошла ошибка"
 		_, _ = bot.Send(msg)
@@ -286,7 +353,11 @@ func collectionNotification(bot *tgbotapi.BotAPI, idCollection int, tagFund stri
 }
 
 func test(bot *tgbotapi.BotAPI, msg tgbotapi.MessageConfig, update tgbotapi.Update) {
-	//fmt.Println(1, update.FromChat().UserName)
+
+	t := time.Date(2009, time.February, 5, 23, 0, 0, 0, time.UTC)
+
+	y, m, d := t.Date()
+	fmt.Println(1, fmt.Sprintf("%d-%d-%d", y, m, d))
 }
 
 func showBalance(bot *tgbotapi.BotAPI, chatId int64) {
@@ -299,7 +370,7 @@ func showBalance(bot *tgbotapi.BotAPI, chatId int64) {
 		return
 	}
 	msg := tgbotapi.NewMessage(chatId, fmt.Sprintf("Текущий баланс: %.2f руб", balance))
-	if _, err := bot.Send(msg); err != nil {
+	if _, err = bot.Send(msg); err != nil {
 		return
 	}
 
@@ -435,27 +506,10 @@ func confirmationCreationNewFund(bot *tgbotapi.BotAPI, chatId int64) {
 
 func creatingNewFund(bot *tgbotapi.BotAPI, chatId int64, update tgbotapi.Update) {
 	var err error
-	sum, err := getFloatFromUser(bot, chatId, "Введите начальную сумму фонда без указания валюты. В качестве разделителя используйте точку.")
+	sum, err := getFloatFromUser(bot, chatId, "Введите начальную сумму фонда без указания валюты.")
 	if err != nil {
 		return
 	}
-	/*msg := tgbotapi.NewMessage(chatId, "Введите начальную сумму фонда без указания валюты. В качестве разделителя используйте точку. Например: 50.25")
-	if _, err = bot.Send(msg); err != nil {
-		return
-	}
-
-	var sum float64
-	for {
-		sum, err = strconv.ParseFloat(waitingResponce(chatId), 64)
-		if err != nil {
-			msg = tgbotapi.NewMessage(chatId, "Попробуйте еще раз")
-			if _, err = bot.Send(msg); err != nil {
-				return
-			}
-			continue
-		}
-		break
-	}*/
 
 	var tag string
 	for i := 0; i < 10; i++ {

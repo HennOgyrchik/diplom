@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	_ "github.com/lib/pq"
+	"regexp"
 )
 
 func dbConnection() (*sql.DB, error) {
@@ -174,19 +175,30 @@ func IsAdmin(memberId int64) (result bool, err error) {
 	return
 }
 
-func CreateCashCollection(tag string, sum float64, comment string, purpose string) (id int, err error) {
-	id = -1
+func CreateCashCollection(tag string, sum float64, status string, comment string, purpose string, closingDate string) (id int, err error) {
 	db, err := dbConnection()
 	if err != nil {
 		return
 	}
 	defer db.Close()
 
-	stmt, err := db.Prepare("insert into cash_collections (tag, sum, status, comment,purpose) values ($1,$2,$3,$4,$5) RETURNING id")
-	if err != nil {
-		return
+	var datePat = regexp.MustCompile(`^\d-\d-\d.`)
+	var stmt *sql.Stmt
+
+	if datePat.MatchString(closingDate) {
+		stmt, err = db.Prepare("insert into cash_collections (tag, sum, status, comment,purpose, close_date) values ($1,$2,$3,$4,$5,$6) RETURNING id")
+		if err != nil {
+			return
+		}
+		err = stmt.QueryRow(tag, sum, status, comment, purpose, closingDate).Scan(&id)
+	} else {
+		stmt, err = db.Prepare("insert into cash_collections (tag, sum, status, comment,purpose) values ($1,$2,$3,$4,$5) RETURNING id")
+		if err != nil {
+			return
+		}
+		err = stmt.QueryRow(tag, sum, status, comment, purpose).Scan(&id)
 	}
-	err = stmt.QueryRow(tag, sum, "открыт", comment, purpose).Scan(&id)
+
 	return
 
 }
