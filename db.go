@@ -57,18 +57,18 @@ func DoesTagExist(tag string) (result bool, err error) {
 	return
 }
 
-func AddMember(tag string, memberId int64, isAdmin bool, login string) error {
+func AddMember(tag string, memberId int64, isAdmin bool, login string, name string) error {
 	db, err := dbConnection()
 	if err != nil {
 		return err
 	}
 	defer db.Close()
 
-	stmt, err := db.Prepare("insert into members (tag_fund,member_id,admin,login) values ($1,$2,$3,$4)")
+	stmt, err := db.Prepare("insert into members (tag_fund,member_id,admin,login,name) values ($1,$2,$3,$4,$5)")
 	if err != nil {
 		return err
 	}
-	_ = stmt.QueryRow(tag, memberId, isAdmin, login)
+	_ = stmt.QueryRow(tag, memberId, isAdmin, login, name)
 	return err
 }
 
@@ -231,7 +231,7 @@ func InfoAboutCashCollection(idCollection int) (sum float64, purpose string, err
 		return
 	}
 
-	err = stmt.QueryRow(id_collection).Scan(&sum, &purpose)
+	err = stmt.QueryRow(idCollection).Scan(&sum, &purpose)
 	return
 }
 
@@ -267,18 +267,51 @@ func GetAdminFund(tag string) (memberId int64, err error) {
 	return
 }
 
-func InfoAboutTransaction(idTransaction int) (sum float64, purpose string, err error) {
+func InfoAboutTransaction(idTransaction int) (status string, typeOfTransaction string, pathToReceipt string, memberId int64, sum float64, err error) {
 	db, err := dbConnection()
 	if err != nil {
 		return
 	}
 	defer db.Close()
 
-	stmt, err := db.Prepare("select sum, purpose from cash_collections where id =$1")
+	stmt, err := db.Prepare("select status,type,receipt,member_id, sum from transactions where id = $1")
 	if err != nil {
 		return
 	}
 
-	err = stmt.QueryRow(idTransaction).Scan(&sum, &purpose)
+	err = stmt.QueryRow(idTransaction).Scan(&status, &typeOfTransaction, &pathToReceipt, &memberId, &sum)
 	return
+}
+
+func GetInfoAboutMember(memberId int64) (isAdmin bool, login string, name string, err error) {
+	db, err := dbConnection()
+	if err != nil {
+		return
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("select admin,login,name from members where member_id = $1")
+	if err != nil {
+		return
+	}
+
+	err = stmt.QueryRow(memberId).Scan(&isAdmin, &login, &name)
+	return
+}
+
+func ChangeStatusTransaction(idTransaction int, status string) error {
+	db, err := dbConnection()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("update transactions set status = $1 where id= $2")
+	if err != nil {
+		return err
+	}
+
+	_ = stmt.QueryRow(status, idTransaction)
+
+	return nil
 }
