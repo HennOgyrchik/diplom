@@ -17,10 +17,19 @@ import (
 	"time"
 )
 
-var memory = map[int64]chan string{}
+//var waitingList = map[int64]chan *tgbotapi.Message{}
+
+// var waitingList = map[int64]chan [2]interface{}{}
+var waitingList = map[int64]map[string]chan *tgbotapi.Message{}
+
+type responce struct {
+	bot      *tgbotapi.BotAPI
+	message  *tgbotapi.Message
+	chatId   int64
+	username string
+}
 
 func main() {
-
 	bot, err := tgbotapi.NewBotAPI(getToken())
 	if err != nil {
 		log.Panic(err)
@@ -36,64 +45,62 @@ func main() {
 	updates := bot.GetUpdatesChan(u)
 
 	for update := range updates {
-		if update.Message != nil {
-			if update.Message.Document != nil {
-				downloadDocument(bot, update)
+		resp := responce{bot: bot}
+		resp.username = update.FromChat().UserName
 
-			}
+		var command string
 
-			if usrChan, ok := memory[update.Message.Chat.ID]; ok {
-				usrChan <- update.Message.Text
+		switch {
+		case update.Message != nil:
+			resp.message = update.Message
+			command = update.Message.Command()
+		case update.CallbackQuery != nil:
+			resp.message = update.CallbackQuery.Message
+			command = update.CallbackQuery.Data
+		default:
+			continue
+
+		}
+
+		resp.chatId = resp.message.Chat.ID
+
+		if usrMap, ok := waitingList[resp.chatId]; ok { //есть ли функции ожидающие ответа от пользователя?
+			if resp.message.Document != nil || resp.message.Photo != nil { // если ответ какой-то файл, сделай пометку о типе файла и отправь ответ в функцию
+				usrMap["attachment"] <- resp.message
 			} else {
-				msg := tgbotapi.NewMessage(update.Message.Chat.ID, update.Message.Text)
-				go commandSwitcher(bot, msg, update.Message.Command(), update)
+				usrMap["text"] <- resp.message
 			}
-
-		} else if update.CallbackQuery != nil {
-			if usrChan, ok := memory[update.CallbackQuery.Message.Chat.ID]; ok {
-				usrChan <- update.Message.Text
-			} else {
-				msg := tgbotapi.NewMessage(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.Message.Text)
-				go commandSwitcher(bot, msg, update.CallbackQuery.Data, update)
-			}
+		} else { // если нет функций ожидающих ответа, запусти новую рутину
+			//msg := tgbotapi.NewMessage(message.Chat.ID, message.Text)
+			go commandSwitcher(resp, command)
 		}
 	}
 }
 
-func downloadDocument(bot *tgbotapi.BotAPI, update tgbotapi.Update) {
-	file_id := update.Message.Document.FileID
-
-	_, err := bot.GetFile(tgbotapi.FileConfig{FileID: file_id})
+func (r *responce) downloadAttachment(fileId string) {
+	_, err := r.bot.GetFile(tgbotapi.FileConfig{FileID: fileId})
 	if err != nil {
-		fmt.Println(2, err)
 		return
 	}
 
-	path_file, _ := bot.GetFileDirectURL(file_id)
-	fmt.Println(path_file)
+	pathFile, _ := r.bot.GetFileDirectURL(fileId)
 
-	filename := path.Base(path_file)
-	fmt.Println("Downloading ", path_file, " to ", filename)
-
-	resp, err := http.Get(path_file)
+	resp, err := http.Get(pathFile)
+	defer resp.Body.Close()
 	if err != nil {
-		fmt.Println(5, err)
 		return
 	}
 
-	f, err := os.Create(filename)
+	f, err := os.Create(path.Base(pathFile))
+	defer f.Close()
 	if err != nil {
-		fmt.Println(4, err)
 		return
 	}
 
 	_, err = io.Copy(f, resp.Body)
 	if err != nil {
-		fmt.Println(6, err)
 		return
 	}
-	f.Close()
-	resp.Body.Close()
 }
 
 func getToken() string {
@@ -111,7 +118,7 @@ func getToken() string {
 	return string(token[:])
 }
 
-func commandSwitcher(bot *tgbotapi.BotAPI, msg tgbotapi.MessageConfig, query string, update tgbotapi.Update) {
+func commandSwitcher(resp responce, query string) {
 	var paymentPat = regexp.MustCompile(`^оплатить\s\d*.`)
 	var rejectionPat = regexp.MustCompile(`^отказ\s\d*.`)
 	var waitingPat = regexp.MustCompile(`^ожидание\s\d*.`)
@@ -119,123 +126,123 @@ func commandSwitcher(bot *tgbotapi.BotAPI, msg tgbotapi.MessageConfig, query str
 
 	switch cmd := query; {
 	case cmd == "start":
-		startMenu(bot, msg.ChatID)
+		resp.startMenu()
 	case cmd == "menu":
-		showMenu(bot, msg.ChatID)
+		resp.showMenu()
 	case cmd == "создать":
-		confirmationCreationNewFund(bot, msg.ChatID)
+		resp.confirmationCreationNewFund()
 	case cmd == "присоединиться":
-		join(bot, msg.ChatID, update)
+		resp.join()
 	case cmd == "создать новый фонд":
-		creatingNewFund(bot, msg.ChatID, update)
+		resp.creatingNewFund()
 	case cmd == "баланс":
-		showBalance(bot, msg.ChatID)
+		resp.showBalance()
 	case cmd == "test":
-		test(bot, msg, update)
+		//test(bot, msg, update)
 	case cmd == "новый сбор":
-		createCashCollection(bot, msg.ChatID, update)
+		resp.createCashCollection()
 	case cmd == "новое списание":
-		createDebitingFunds(bot, msg.ChatID, update)
+		resp.createDebitingFunds()
 	case paymentPat.MatchString(cmd): // оплата
 		cashCollectionId, err := strconv.Atoi(strings.Split(cmd, " ")[1])
 		if err != nil {
 			return
 		}
-		payment(bot, msg.ChatID, cashCollectionId)
+		resp.payment(cashCollectionId)
 	case acceptPat.MatchString(cmd): // подтверждение оплаты
 		idTransaction, err := strconv.Atoi(strings.Split(cmd, " ")[1])
 		if err != nil {
 			return
 		}
-		changeStatusOfTransaction(bot, msg.ChatID, idTransaction, "подтвержден")
+		resp.changeStatusOfTransaction(idTransaction, "подтвержден")
 	case waitingPat.MatchString(cmd): // ожидание оплаты
 		idTransaction, err := strconv.Atoi(strings.Split(cmd, " ")[1])
 		if err != nil {
 			return
 		}
-		changeStatusOfTransaction(bot, msg.ChatID, idTransaction, "ожидание")
+		resp.changeStatusOfTransaction(idTransaction, "ожидание")
 	case rejectionPat.MatchString(cmd): // отказ оплаты
 		idTransaction, err := strconv.Atoi(strings.Split(cmd, " ")[1])
 		if err != nil {
 			return
 		}
-		changeStatusOfTransaction(bot, msg.ChatID, idTransaction, "отказ")
+		resp.changeStatusOfTransaction(idTransaction, "отказ")
 	default:
-		msg.Text = "Я не знаю такую команду"
-		if _, err := bot.Send(msg); err != nil {
+		msg := tgbotapi.NewMessage(resp.chatId, "Я не знаю такую команду")
+		if _, err := resp.bot.Send(msg); err != nil {
 			panic(err)
 		}
 	}
 
 }
 
-func createDebitingFunds(bot *tgbotapi.BotAPI, chatId int64, update tgbotapi.Update) {
-	sum, err := getFloatFromUser(bot, chatId, "Введите сумму списания.")
+func (r *responce) createDebitingFunds() {
+	sum, err := r.getFloatFromUser("Введите сумму списания.")
 	if err != nil {
 		return
 	}
 
-	msg := tgbotapi.NewMessage(chatId, "Укажите причину списания")
-	if _, err = bot.Send(msg); err != nil {
+	msg := tgbotapi.NewMessage(r.chatId, "Укажите причину списания")
+	if _, err = r.bot.Send(msg); err != nil {
 		return
 	}
 
-	purpose := waitingResponce(chatId)
+	purpose := r.waitingResponce("text").Text
 
-	tag, err := db.GetTag(chatId)
+	tag, err := db.GetTag(r.chatId)
 	if err != nil {
 		return
 	}
 
 	y, m, d := time.Now().Date()
 
-	id, err := db.CreateCashCollection(tag, sum, "закрыт", fmt.Sprintf("Инициатор: %s", update.FromChat().UserName), purpose, fmt.Sprintf("%d-%d-%d", y, m, d))
+	id, err := db.CreateCashCollection(tag, sum, "закрыт", fmt.Sprintf("Инициатор: %s", r.username), purpose, fmt.Sprintf("%d-%d-%d", y, m, d))
 	if err != nil {
 		msg.Text = "Произошла ошибка"
-		_, _ = bot.Send(msg)
+		_, _ = r.bot.Send(msg)
 		return
 	}
 
 	msg.Text = "Прикрепите чек файлом"
-	if _, err = bot.Send(msg); err != nil {
+	if _, err = r.bot.Send(msg); err != nil {
 		return
 	}
-
-	_ = waitingResponce(chatId)
-
+	////////////////////////////////////////////ожидание чека файлом или картинкой
+	_ = r.waitingResponce("attachment")
+	///////////////////////////////////////////////////////////////////////////
 	msg.Text = "Списание оформлено. Все участники будут проинформированы"
-	_, _ = bot.Send(msg)
+	_, _ = r.bot.Send(msg)
 
 	fmt.Println(id)
 }
 
-func changeStatusOfTransaction(bot *tgbotapi.BotAPI, chatId int64, idTransaction int, status string) {
+func (r *responce) changeStatusOfTransaction(idTransaction int, status string) {
 	err := db.ChangeStatusTransaction(idTransaction, status)
 	if err != nil {
 		return
 	}
-	msg := tgbotapi.NewMessage(chatId, fmt.Sprintf("Статус оплаты: %s", status))
-	_, _ = bot.Send(msg)
+	msg := tgbotapi.NewMessage(r.chatId, fmt.Sprintf("Статус оплаты: %s", status))
+	_, _ = r.bot.Send(msg)
 
-	paymentChangeStatusNotification(bot, idTransaction)
+	r.paymentChangeStatusNotification(idTransaction)
 }
 
-func paymentChangeStatusNotification(bot *tgbotapi.BotAPI, idTransaction int) {
+func (r *responce) paymentChangeStatusNotification(idTransaction int) {
 	status, _, _, memberId, _, err := db.InfoAboutTransaction(idTransaction)
 	if err != nil {
 		return
 	}
 	msg := tgbotapi.NewMessage(memberId, fmt.Sprintf("Статус оплаты изменен на: %s", status))
-	_, _ = bot.Send(msg)
+	_, _ = r.bot.Send(msg)
 }
 
-func payment(bot *tgbotapi.BotAPI, chatId int64, cashCollectionId int) {
-	sum, err := getFloatFromUser(bot, chatId, "Введите сумму пополнения.")
+func (r *responce) payment(cashCollectionId int) {
+	sum, err := r.getFloatFromUser("Введите сумму пополнения.")
 	if err != nil {
 		return
 	}
 
-	idTransaction, err := db.InsertInTransactions(cashCollectionId, sum, "пополнение", "ожидание", "", chatId)
+	idTransaction, err := db.InsertInTransactions(cashCollectionId, sum, "пополнение", "ожидание", "", r.chatId)
 	if err != nil {
 		return
 	}
@@ -243,16 +250,16 @@ func payment(bot *tgbotapi.BotAPI, chatId int64, cashCollectionId int) {
 		return
 	}
 
-	msg := tgbotapi.NewMessage(chatId, "Ваша оплата добавлена в очередь на подтверждение")
-	if _, err = bot.Send(msg); err != nil {
+	msg := tgbotapi.NewMessage(r.chatId, "Ваша оплата добавлена в очередь на подтверждение")
+	if _, err = r.bot.Send(msg); err != nil {
 		return
 	}
-	paymentNotification(bot, chatId, idTransaction)
+	r.paymentNotification(idTransaction)
 
 }
 
-func paymentNotification(bot *tgbotapi.BotAPI, chatId int64, idTransaction int) { //доделать
-	tag, err := db.GetTag(chatId)
+func (r *responce) paymentNotification(idTransaction int) { //доделать
+	tag, err := db.GetTag(r.chatId)
 	if err != nil {
 		return
 	}
@@ -275,22 +282,22 @@ func paymentNotification(bot *tgbotapi.BotAPI, chatId int64, idTransaction int) 
 
 	msg := tgbotapi.NewMessage(adminId, fmt.Sprintf("Подтвердите зачисление средств на счет фонда.\nСумма: %.2f\nОтправитель: %s", sum, name))
 	msg.ReplyMarkup = &okKeyboard
-	_, _ = bot.Send(msg)
+	_, _ = r.bot.Send(msg)
 
 }
 
-func getFloatFromUser(bot *tgbotapi.BotAPI, chatId int64, message string) (sum float64, err error) {
-	msg := tgbotapi.NewMessage(chatId, message)
-	if _, err := bot.Send(msg); err != nil {
+func (r *responce) getFloatFromUser(message string) (sum float64, err error) {
+	msg := tgbotapi.NewMessage(r.chatId, message)
+	if _, err := r.bot.Send(msg); err != nil {
 		return 0.0, err
 	}
 
 	sum = -0.0
 	for {
-		sum, err = strconv.ParseFloat(waitingResponce(chatId), 64)
+		sum, err = strconv.ParseFloat(r.waitingResponce("text").Text, 64)
 		if err != nil {
-			msg = tgbotapi.NewMessage(chatId, "Попробуйте еще раз")
-			if _, err = bot.Send(msg); err != nil {
+			msg = tgbotapi.NewMessage(r.chatId, "Попробуйте еще раз")
+			if _, err = r.bot.Send(msg); err != nil {
 				return
 			}
 			continue
@@ -300,37 +307,37 @@ func getFloatFromUser(bot *tgbotapi.BotAPI, chatId int64, message string) (sum f
 	return sum, nil
 }
 
-func createCashCollection(bot *tgbotapi.BotAPI, chatId int64, update tgbotapi.Update) {
-	sum, err := getFloatFromUser(bot, chatId, "Введите сумму сбора с одного участника.")
+func (r *responce) createCashCollection() {
+	sum, err := r.getFloatFromUser("Введите сумму сбора с одного участника.")
 	if err != nil {
 		return
 	}
 
-	msg := tgbotapi.NewMessage(chatId, "Укажите назначение сбора")
-	if _, err = bot.Send(msg); err != nil {
+	msg := tgbotapi.NewMessage(r.chatId, "Укажите назначение сбора")
+	if _, err = r.bot.Send(msg); err != nil {
 		return
 	}
 
-	purpose := waitingResponce(chatId)
+	purpose := r.waitingResponce("text").Text
 
-	tag, err := db.GetTag(chatId)
+	tag, err := db.GetTag(r.chatId)
 	if err != nil {
 		return
 	}
 
-	id, err := db.CreateCashCollection(tag, sum, "открыт", fmt.Sprintf("Инициатор: %s", update.FromChat().UserName), purpose, "")
+	id, err := db.CreateCashCollection(tag, sum, "открыт", fmt.Sprintf("Инициатор: %s", r.username), purpose, "")
 	if err != nil {
 		msg.Text = "Произошла ошибка"
-		_, _ = bot.Send(msg)
+		_, _ = r.bot.Send(msg)
 		return
 	}
 	msg.Text = "Сбор создан. Сообщение о сборе будет отправлено всем участникам."
-	_, _ = bot.Send(msg)
+	_, _ = r.bot.Send(msg)
 
-	collectionNotification(bot, id, tag)
+	r.collectionNotification(id, tag)
 }
 
-func collectionNotification(bot *tgbotapi.BotAPI, idCollection int, tagFund string) {
+func (r *responce) collectionNotification(idCollection int, tagFund string) {
 	members, err := db.SelectMembers(tagFund)
 	if err != nil {
 		return
@@ -348,11 +355,11 @@ func collectionNotification(bot *tgbotapi.BotAPI, idCollection int, tagFund stri
 		)
 		msg := tgbotapi.NewMessage(value, fmt.Sprintf("Иницирован новый сбор.\nСумма к оплате: %.2f\nНазначение: %s", sum, purpose))
 		msg.ReplyMarkup = &paymentKeyboard
-		_, _ = bot.Send(msg)
+		_, _ = r.bot.Send(msg)
 	}
 }
 
-func test(bot *tgbotapi.BotAPI, msg tgbotapi.MessageConfig, update tgbotapi.Update) {
+func test() {
 
 	t := time.Date(2009, time.February, 5, 23, 0, 0, 0, time.UTC)
 
@@ -360,8 +367,8 @@ func test(bot *tgbotapi.BotAPI, msg tgbotapi.MessageConfig, update tgbotapi.Upda
 	fmt.Println(1, fmt.Sprintf("%d-%d-%d", y, m, d))
 }
 
-func showBalance(bot *tgbotapi.BotAPI, chatId int64) {
-	tag, err := db.GetTag(chatId)
+func (r *responce) showBalance() {
+	tag, err := db.GetTag(r.chatId)
 	if err != nil {
 		return
 	}
@@ -369,14 +376,14 @@ func showBalance(bot *tgbotapi.BotAPI, chatId int64) {
 	if err != nil {
 		return
 	}
-	msg := tgbotapi.NewMessage(chatId, fmt.Sprintf("Текущий баланс: %.2f руб", balance))
-	if _, err = bot.Send(msg); err != nil {
+	msg := tgbotapi.NewMessage(r.chatId, fmt.Sprintf("Текущий баланс: %.2f руб", balance))
+	if _, err = r.bot.Send(msg); err != nil {
 		return
 	}
 
 }
 
-func startMenu(bot *tgbotapi.BotAPI, chatId int64) {
+func (r *responce) startMenu() {
 	var startKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("Создать фонд", "создать"),
@@ -385,24 +392,24 @@ func startMenu(bot *tgbotapi.BotAPI, chatId int64) {
 		),
 	)
 
-	msg := tgbotapi.NewMessage(chatId, "Приветствую! Выберите один из вариантов")
+	msg := tgbotapi.NewMessage(r.chatId, "Приветствую! Выберите один из вариантов")
 	msg.ReplyMarkup = &startKeyboard
-	if _, err := bot.Send(msg); err != nil {
+	if _, err := r.bot.Send(msg); err != nil {
 		return
 	}
 }
 
-func showMenu(bot *tgbotapi.BotAPI, chatId int64) {
-	ok, err := db.IsMember(chatId)
+func (r *responce) showMenu() {
+	ok, err := db.IsMember(r.chatId)
 	if err != nil {
 		return
 	}
 	if !ok {
-		msg := tgbotapi.NewMessage(chatId, "Вы не являетесь участником фонда. Создайте новый фонд или присоединитесь к существующему.")
-		if _, err = bot.Send(msg); err != nil {
+		msg := tgbotapi.NewMessage(r.chatId, "Вы не являетесь участником фонда. Создайте новый фонд или присоединитесь к существующему.")
+		if _, err = r.bot.Send(msg); err != nil {
 			return
 		}
-		startMenu(bot, chatId)
+		r.startMenu()
 		return
 	}
 
@@ -417,9 +424,9 @@ func showMenu(bot *tgbotapi.BotAPI, chatId int64) {
 		),
 	)
 
-	msg := tgbotapi.NewMessage(chatId, "Приветствую! Выберите один из вариантов")
+	msg := tgbotapi.NewMessage(r.chatId, "Приветствую! Выберите один из вариантов")
 
-	ok, err = db.IsAdmin(chatId)
+	ok, err = db.IsAdmin(r.chatId)
 
 	if err != nil {
 		return
@@ -434,31 +441,31 @@ func showMenu(bot *tgbotapi.BotAPI, chatId int64) {
 	}
 
 	msg.ReplyMarkup = &menuKeyboard
-	if _, err = bot.Send(msg); err != nil {
+	if _, err = r.bot.Send(msg); err != nil {
 		fmt.Println(err)
 		return
 	}
 }
 
-func join(bot *tgbotapi.BotAPI, chatId int64, update tgbotapi.Update) {
-	msg := tgbotapi.NewMessage(chatId, "")
-	ok, err := db.IsMember(chatId)
+func (r *responce) join() {
+	msg := tgbotapi.NewMessage(r.chatId, "")
+	ok, err := db.IsMember(r.chatId)
 	if err != nil {
 		return
 	}
 	if ok {
 		msg.Text = "Вы уже являетесь участником фонда"
-		if _, err = bot.Send(msg); err != nil {
+		if _, err = r.bot.Send(msg); err != nil {
 			fmt.Println(err)
 		}
 		return
 	}
 	msg.Text = "Введите тег фонда. Если у вас нет тега, запросите его у администратора фонда."
-	if _, err = bot.Send(msg); err != nil {
+	if _, err = r.bot.Send(msg); err != nil {
 		fmt.Println(err)
 		return
 	}
-	tag := waitingResponce(chatId)
+	tag := r.waitingResponce("text").Text
 
 	ok, err = db.ExistsFund(tag)
 	if err != nil {
@@ -467,23 +474,23 @@ func join(bot *tgbotapi.BotAPI, chatId int64, update tgbotapi.Update) {
 	if !ok {
 		msg.Text = "Фонд с таким тегом не найден."
 	} else {
-		err = db.AddMember(tag, chatId, false, update.FromChat().UserName, getName(bot, chatId))
+		err = db.AddMember(tag, r.chatId, false, r.username, r.getName())
 		if err != nil {
 			return
 		}
 		msg.Text = "Вы успешно присоединились к фонду."
 	}
 
-	if _, err = bot.Send(msg); err != nil {
+	if _, err = r.bot.Send(msg); err != nil {
 		fmt.Println(err)
 		return
 	}
 
 }
 
-func confirmationCreationNewFund(bot *tgbotapi.BotAPI, chatId int64) {
-	msg := tgbotapi.NewMessage(chatId, "")
-	ok, err := db.IsMember(chatId)
+func (r *responce) confirmationCreationNewFund() {
+	msg := tgbotapi.NewMessage(r.chatId, "")
+	ok, err := db.IsMember(r.chatId)
 	if err != nil {
 		return
 	}
@@ -499,14 +506,14 @@ func confirmationCreationNewFund(bot *tgbotapi.BotAPI, chatId int64) {
 		)
 		msg.ReplyMarkup = numericKeyboard
 	}
-	if _, err = bot.Send(msg); err != nil {
+	if _, err = r.bot.Send(msg); err != nil {
 		panic(err)
 	}
 }
 
-func creatingNewFund(bot *tgbotapi.BotAPI, chatId int64, update tgbotapi.Update) {
+func (r *responce) creatingNewFund() {
 	var err error
-	sum, err := getFloatFromUser(bot, chatId, "Введите начальную сумму фонда без указания валюты.")
+	sum, err := r.getFloatFromUser("Введите начальную сумму фонда без указания валюты.")
 	if err != nil {
 		return
 	}
@@ -529,24 +536,28 @@ func creatingNewFund(bot *tgbotapi.BotAPI, chatId int64, update tgbotapi.Update)
 	if err != nil {
 		return
 	}
-	name := getName(bot, chatId)
-	err = db.AddMember(tag, chatId, true, update.FromChat().UserName, name)
+	name := r.getName()
+	err = db.AddMember(tag, r.chatId, true, r.username, name)
 	if err != nil {
 		return
 	}
 
-	msg := tgbotapi.NewMessage(chatId, fmt.Sprintf("Новый фонд создан успешно! Присоединиться к фонду можно, используя тег: %s \nВнимание! Не показывайте этот тег посторонним людям.", tag))
-	if _, err = bot.Send(msg); err != nil {
+	msg := tgbotapi.NewMessage(r.chatId, fmt.Sprintf("Новый фонд создан успешно! Присоединиться к фонду можно, используя тег: %s \nВнимание! Не показывайте этот тег посторонним людям.", tag))
+	if _, err = r.bot.Send(msg); err != nil {
 		return
 	}
 
 }
 
-func waitingResponce(chatId int64) string {
-	memory[chatId] = make(chan string)
-	defer delete(memory, chatId)
-	defer close(memory[chatId])
-	return <-memory[chatId]
+func (r *responce) waitingResponce(obj string) *tgbotapi.Message {
+	waitingList[r.chatId] = map[string]chan *tgbotapi.Message{}
+	defer delete(waitingList, r.chatId)
+
+	waitingList[r.chatId][obj] = make(chan *tgbotapi.Message)
+	defer close(waitingList[r.chatId][obj])
+
+	return <-waitingList[r.chatId][obj]
+
 }
 
 func newTag() string {
@@ -558,10 +569,10 @@ func newTag() string {
 	return string(result)
 }
 
-func getName(bot *tgbotapi.BotAPI, chatId int64) string {
-	msg := tgbotapi.NewMessage(chatId, "Представьтесь, пожалуйста. Введите ФИО")
-	if _, err := bot.Send(msg); err != nil {
+func (r *responce) getName() string {
+	msg := tgbotapi.NewMessage(r.chatId, "Представьтесь, пожалуйста. Введите ФИО")
+	if _, err := r.bot.Send(msg); err != nil {
 		return ""
 	}
-	return waitingResponce(chatId)
+	return r.waitingResponce("text").Text
 }
