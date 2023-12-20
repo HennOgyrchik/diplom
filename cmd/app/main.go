@@ -132,6 +132,8 @@ func (r *response) commandSwitcher(query string) {
 		r.showBalance()
 	case cmd == "test":
 		r.test()
+	case cmd == "участники":
+		r.getMembers()
 	case cmd == "новый сбор":
 		r.createCashCollection()
 	case cmd == "новое списание":
@@ -171,7 +173,6 @@ func (r *response) commandSwitcher(query string) {
 
 }
 
-// не доделано
 func (r *response) createDebitingFunds() {
 	sum, err := r.getFloatFromUser("Введите сумму списания.")
 	if err != nil {
@@ -251,9 +252,20 @@ func (r *response) paymentChangeStatusNotification(idTransaction int) {
 }
 
 func (r *response) payment(cashCollectionId int) {
+	target, _, err := db.InfoAboutCashCollection(cashCollectionId)
+	if err != nil {
+		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
+		return
+	}
+
 	sum, err := r.getFloatFromUser("Введите сумму пополнения.")
 	if err != nil {
 		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
+		return
+	}
+
+	if sum < target {
+		_, _ = r.bot.Send(tgbotapi.NewMessage(r.chatId, "Вы не можете оплатить сумму меньше необходимой."))
 		return
 	}
 
@@ -644,7 +656,43 @@ func (r *response) getName() (string, error) {
 }
 
 func (r *response) notificationAboutError(message string) {
+	if message == "" {
+		message = "Произошла ошибка. Попробуйте позже"
+	}
+
 	msg := tgbotapi.NewMessage(r.chatId, message)
 	_, _ = r.bot.Send(msg)
 	return
+}
+
+func (r *response) getMembers() {
+	tag, err := db.GetTag(r.chatId)
+	if err != nil {
+		r.notificationAboutError("")
+		return
+	}
+
+	id_members, err := db.SelectMembers(tag)
+	if err != nil {
+		r.notificationAboutError("")
+		return
+	}
+
+	message := "Список участников:\n"
+
+	for i, member := range id_members {
+		is_admin, login, name, err := db.GetInfoAboutMember(member)
+		if err != nil {
+			r.notificationAboutError("")
+			return
+		}
+		admin := ""
+		if is_admin {
+			admin = "Администратор"
+		}
+		message = message + fmt.Sprintf("%d. %s (@%s) %s\n", i+1, name, login, admin)
+	}
+
+	msg := tgbotapi.NewMessage(r.chatId, message)
+	_, _ = r.bot.Send(msg)
 }

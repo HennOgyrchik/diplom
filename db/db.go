@@ -343,3 +343,31 @@ func CreateDebitingFunds(memberId int64, tag string, sum float64, comment string
 	err = stmt.QueryRow(tag, sum, comment, purpose, receipt, memberId).Scan(&ok)
 	return
 }
+
+func GetDebtors(idCashCollection int) (members []int64, err error) {
+	db, err := dbConnection()
+	if err != nil {
+		return
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("select member_id from members where member_id not in (select member_id  from transactions where cash_collection_id =$1 and status = 'подтвержден')")
+	if err != nil {
+		return
+	}
+
+	rows, err := stmt.Query(idCashCollection)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var member int64
+		if err = rows.Scan(&member); err != nil {
+			return
+		}
+		members = append(members, member)
+	}
+	return
+}
