@@ -1,28 +1,25 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"io"
 	"io/ioutil"
 	"log"
 	"math/rand"
 	"net/http"
 	"os"
 	"path"
-	db "project1"
+	"project1/db"
+	"project1/ftp"
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 )
 
-//var waitingList = map[int64]chan *tgbotapi.Message{}
+var waitingList = map[int64]chan *tgbotapi.Message{}
 
-// var waitingList = map[int64]chan [2]interface{}{}
-var waitingList = map[int64]map[string]chan *tgbotapi.Message{}
-
-type responce struct {
+type response struct {
 	bot      *tgbotapi.BotAPI
 	message  *tgbotapi.Message
 	chatId   int64
@@ -45,7 +42,7 @@ func main() {
 	updates := bot.GetUpdatesChan(u)
 
 	for update := range updates {
-		resp := responce{bot: bot}
+		resp := response{bot: bot}
 		resp.username = update.FromChat().UserName
 
 		var command string
@@ -65,25 +62,23 @@ func main() {
 		resp.chatId = resp.message.Chat.ID
 
 		if usrMap, ok := waitingList[resp.chatId]; ok { //есть ли функции ожидающие ответа от пользователя?
-			if resp.message.Document != nil || resp.message.Photo != nil { // если ответ какой-то файл, сделай пометку о типе файла и отправь ответ в функцию
-				usrMap["attachment"] <- resp.message
-			} else {
-				usrMap["text"] <- resp.message
-			}
+			usrMap <- resp.message
 		} else { // если нет функций ожидающих ответа, запусти новую рутину
-			//msg := tgbotapi.NewMessage(message.Chat.ID, message.Text)
-			go commandSwitcher(resp, command)
+			go resp.commandSwitcher(command)
 		}
 	}
 }
 
-func (r *responce) downloadAttachment(fileId string) {
-	_, err := r.bot.GetFile(tgbotapi.FileConfig{FileID: fileId})
+func (r *response) downloadAttachment(fileId string) (fileName string, err error) {
+	_, err = r.bot.GetFile(tgbotapi.FileConfig{FileID: fileId})
 	if err != nil {
 		return
 	}
 
-	pathFile, _ := r.bot.GetFileDirectURL(fileId)
+	pathFile, err := r.bot.GetFileDirectURL(fileId)
+	if err != nil {
+		return
+	}
 
 	resp, err := http.Get(pathFile)
 	defer resp.Body.Close()
@@ -91,16 +86,14 @@ func (r *responce) downloadAttachment(fileId string) {
 		return
 	}
 
-	f, err := os.Create(path.Base(pathFile))
-	defer f.Close()
+	fileName = strconv.FormatInt(r.chatId, 10) + "_" + path.Base(pathFile)
+	ok, err := ftp.StoreFile(fileName, resp.Body)
 	if err != nil {
-		return
+		fmt.Println(err)
 	}
+	fmt.Print(ok)
 
-	_, err = io.Copy(f, resp.Body)
-	if err != nil {
-		return
-	}
+	return
 }
 
 func getToken() string {
@@ -118,7 +111,7 @@ func getToken() string {
 	return string(token[:])
 }
 
-func commandSwitcher(resp responce, query string) {
+func (r *response) commandSwitcher(query string) {
 	var paymentPat = regexp.MustCompile(`^оплатить\s\d*.`)
 	var rejectionPat = regexp.MustCompile(`^отказ\s\d*.`)
 	var waitingPat = regexp.MustCompile(`^ожидание\s\d*.`)
@@ -126,57 +119,60 @@ func commandSwitcher(resp responce, query string) {
 
 	switch cmd := query; {
 	case cmd == "start":
-		resp.startMenu()
+		r.startMenu()
 	case cmd == "menu":
-		resp.showMenu()
+		r.showMenu()
 	case cmd == "создать":
-		resp.confirmationCreationNewFund()
+		r.confirmationCreationNewFund()
 	case cmd == "присоединиться":
-		resp.join()
+		r.join()
 	case cmd == "создать новый фонд":
-		resp.creatingNewFund()
+		r.creatingNewFund()
 	case cmd == "баланс":
-		resp.showBalance()
+		r.showBalance()
 	case cmd == "test":
-		//test(bot, msg, update)
+		r.test()
 	case cmd == "новый сбор":
-		resp.createCashCollection()
+		r.createCashCollection()
 	case cmd == "новое списание":
-		resp.createDebitingFunds()
+		r.createDebitingFunds()
 	case paymentPat.MatchString(cmd): // оплата
 		cashCollectionId, err := strconv.Atoi(strings.Split(cmd, " ")[1])
 		if err != nil {
+			r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 			return
 		}
-		resp.payment(cashCollectionId)
+		r.payment(cashCollectionId)
 	case acceptPat.MatchString(cmd): // подтверждение оплаты
 		idTransaction, err := strconv.Atoi(strings.Split(cmd, " ")[1])
 		if err != nil {
+			r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 			return
 		}
-		resp.changeStatusOfTransaction(idTransaction, "подтвержден")
+		r.changeStatusOfTransaction(idTransaction, "подтвержден")
 	case waitingPat.MatchString(cmd): // ожидание оплаты
 		idTransaction, err := strconv.Atoi(strings.Split(cmd, " ")[1])
 		if err != nil {
+			r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 			return
 		}
-		resp.changeStatusOfTransaction(idTransaction, "ожидание")
+		r.changeStatusOfTransaction(idTransaction, "ожидание")
 	case rejectionPat.MatchString(cmd): // отказ оплаты
 		idTransaction, err := strconv.Atoi(strings.Split(cmd, " ")[1])
 		if err != nil {
+			r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 			return
 		}
-		resp.changeStatusOfTransaction(idTransaction, "отказ")
+		r.changeStatusOfTransaction(idTransaction, "отказ")
 	default:
-		msg := tgbotapi.NewMessage(resp.chatId, "Я не знаю такую команду")
-		if _, err := resp.bot.Send(msg); err != nil {
-			panic(err)
-		}
+		msg := tgbotapi.NewMessage(r.chatId, "Я не знаю такую команду")
+		_, _ = r.bot.Send(msg)
 	}
 
 }
 
-func (r *responce) createDebitingFunds() {
+// не доделано
+func (r *response) createDebitingFunds() {
 	sum, err := r.getFloatFromUser("Введите сумму списания.")
 	if err != nil {
 		return
@@ -187,19 +183,14 @@ func (r *responce) createDebitingFunds() {
 		return
 	}
 
-	purpose := r.waitingResponce("text").Text
-
-	tag, err := db.GetTag(r.chatId)
+	answer, err := r.waitingResponse("text")
 	if err != nil {
 		return
 	}
+	purpose := answer.Text
 
-	y, m, d := time.Now().Date()
-
-	id, err := db.CreateCashCollection(tag, sum, "закрыт", fmt.Sprintf("Инициатор: %s", r.username), purpose, fmt.Sprintf("%d-%d-%d", y, m, d))
+	tag, err := db.GetTag(r.chatId)
 	if err != nil {
-		msg.Text = "Произошла ошибка"
-		_, _ = r.bot.Send(msg)
 		return
 	}
 
@@ -208,17 +199,39 @@ func (r *responce) createDebitingFunds() {
 		return
 	}
 	////////////////////////////////////////////ожидание чека файлом или картинкой
-	_ = r.waitingResponce("attachment")
+	answer, err = r.waitingResponse("attachment")
+	if err != nil {
+		return
+	}
+
+	var file string
+	if answer.Photo != nil {
+		file = answer.Photo[len(answer.Photo)-1].FileID
+
+	} else {
+		file = answer.Document.FileID
+	}
+	fileName, err := r.downloadAttachment(file)
+	if err != nil {
+		return
+	}
+
+	///////////////////////////Создание транзакции////////////////////////////////////////////////
+	ok, err := db.CreateDebitingFunds(r.chatId, tag, sum, fmt.Sprintf("Инициатор: %s", r.username), purpose, fileName)
+	if err != nil || !ok {
+		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
+		return
+	}
 	///////////////////////////////////////////////////////////////////////////
-	msg.Text = "Списание оформлено. Все участники будут проинформированы"
+	msg.Text = "Списание проведено успешно."
 	_, _ = r.bot.Send(msg)
 
-	fmt.Println(id)
 }
 
-func (r *responce) changeStatusOfTransaction(idTransaction int, status string) {
+func (r *response) changeStatusOfTransaction(idTransaction int, status string) {
 	err := db.ChangeStatusTransaction(idTransaction, status)
 	if err != nil {
+		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 		return
 	}
 	msg := tgbotapi.NewMessage(r.chatId, fmt.Sprintf("Статус оплаты: %s", status))
@@ -227,44 +240,43 @@ func (r *responce) changeStatusOfTransaction(idTransaction int, status string) {
 	r.paymentChangeStatusNotification(idTransaction)
 }
 
-func (r *responce) paymentChangeStatusNotification(idTransaction int) {
+func (r *response) paymentChangeStatusNotification(idTransaction int) {
 	status, _, _, memberId, _, err := db.InfoAboutTransaction(idTransaction)
 	if err != nil {
+		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 		return
 	}
 	msg := tgbotapi.NewMessage(memberId, fmt.Sprintf("Статус оплаты изменен на: %s", status))
 	_, _ = r.bot.Send(msg)
 }
 
-func (r *responce) payment(cashCollectionId int) {
+func (r *response) payment(cashCollectionId int) {
 	sum, err := r.getFloatFromUser("Введите сумму пополнения.")
 	if err != nil {
+		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 		return
 	}
 
 	idTransaction, err := db.InsertInTransactions(cashCollectionId, sum, "пополнение", "ожидание", "", r.chatId)
 	if err != nil {
-		return
-	}
-	if err != nil {
+		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 		return
 	}
 
 	msg := tgbotapi.NewMessage(r.chatId, "Ваша оплата добавлена в очередь на подтверждение")
-	if _, err = r.bot.Send(msg); err != nil {
-		return
-	}
+	_, _ = r.bot.Send(msg)
 	r.paymentNotification(idTransaction)
-
 }
 
-func (r *responce) paymentNotification(idTransaction int) { //доделать
+func (r *response) paymentNotification(idTransaction int) { //доделать
 	tag, err := db.GetTag(r.chatId)
 	if err != nil {
+		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 		return
 	}
 	adminId, err := db.GetAdminFund(tag)
 	if err != nil {
+		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 		return
 	}
 
@@ -286,30 +298,34 @@ func (r *responce) paymentNotification(idTransaction int) { //доделать
 
 }
 
-func (r *responce) getFloatFromUser(message string) (sum float64, err error) {
+func (r *response) getFloatFromUser(message string) (sum float64, err error) {
 	msg := tgbotapi.NewMessage(r.chatId, message)
-	if _, err := r.bot.Send(msg); err != nil {
-		return 0.0, err
+	if _, err = r.bot.Send(msg); err != nil {
+		return
 	}
 
-	sum = -0.0
 	for {
-		sum, err = strconv.ParseFloat(r.waitingResponce("text").Text, 64)
+		var answer *tgbotapi.Message
+
+		answer, err = r.waitingResponse("text")
 		if err != nil {
-			msg = tgbotapi.NewMessage(r.chatId, "Попробуйте еще раз")
-			if _, err = r.bot.Send(msg); err != nil {
-				return
-			}
+			return
+		}
+
+		sum, err = strconv.ParseFloat(answer.Text, 64)
+		if err != nil {
+			r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 			continue
 		}
 		break
 	}
-	return sum, nil
+	return
 }
 
-func (r *responce) createCashCollection() {
+func (r *response) createCashCollection() {
 	sum, err := r.getFloatFromUser("Введите сумму сбора с одного участника.")
 	if err != nil {
+		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 		return
 	}
 
@@ -318,17 +334,22 @@ func (r *responce) createCashCollection() {
 		return
 	}
 
-	purpose := r.waitingResponce("text").Text
+	answer, err := r.waitingResponse("text")
+	if err != nil {
+		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
+		return
+	}
+	purpose := answer.Text
 
 	tag, err := db.GetTag(r.chatId)
 	if err != nil {
+		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 		return
 	}
 
 	id, err := db.CreateCashCollection(tag, sum, "открыт", fmt.Sprintf("Инициатор: %s", r.username), purpose, "")
 	if err != nil {
-		msg.Text = "Произошла ошибка"
-		_, _ = r.bot.Send(msg)
+		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 		return
 	}
 	msg.Text = "Сбор создан. Сообщение о сборе будет отправлено всем участникам."
@@ -337,13 +358,15 @@ func (r *responce) createCashCollection() {
 	r.collectionNotification(id, tag)
 }
 
-func (r *responce) collectionNotification(idCollection int, tagFund string) {
+func (r *response) collectionNotification(idCollection int, tagFund string) {
 	members, err := db.SelectMembers(tagFund)
 	if err != nil {
+		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 		return
 	}
 	sum, purpose, err := db.InfoAboutCashCollection(idCollection)
 	if err != nil {
+		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 		return
 	}
 
@@ -359,31 +382,43 @@ func (r *responce) collectionNotification(idCollection int, tagFund string) {
 	}
 }
 
-func test() {
+func (r *response) test() {
+	file, err := r.waitingResponse("attachment")
+	if err != nil {
+		r.notificationAboutError("Ошибка")
+	}
 
-	t := time.Date(2009, time.February, 5, 23, 0, 0, 0, time.UTC)
+	if file.Photo != nil {
 
-	y, m, d := t.Date()
-	fmt.Println(1, fmt.Sprintf("%d-%d-%d", y, m, d))
+		_, err := r.downloadAttachment(file.Photo[len(file.Photo)-1].FileID)
+		if err != nil {
+			fmt.Print(err)
+
+		}
+
+	} else {
+		r.downloadAttachment(file.Document.FileID)
+	}
+
 }
 
-func (r *responce) showBalance() {
+func (r *response) showBalance() {
 	tag, err := db.GetTag(r.chatId)
 	if err != nil {
+		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 		return
 	}
 	balance, err := db.ShowBalance(tag)
 	if err != nil {
+		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 		return
 	}
 	msg := tgbotapi.NewMessage(r.chatId, fmt.Sprintf("Текущий баланс: %.2f руб", balance))
-	if _, err = r.bot.Send(msg); err != nil {
-		return
-	}
+	_, _ = r.bot.Send(msg)
 
 }
 
-func (r *responce) startMenu() {
+func (r *response) startMenu() {
 	var startKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("Создать фонд", "создать"),
@@ -394,14 +429,13 @@ func (r *responce) startMenu() {
 
 	msg := tgbotapi.NewMessage(r.chatId, "Приветствую! Выберите один из вариантов")
 	msg.ReplyMarkup = &startKeyboard
-	if _, err := r.bot.Send(msg); err != nil {
-		return
-	}
+	_, _ = r.bot.Send(msg)
 }
 
-func (r *responce) showMenu() {
+func (r *response) showMenu() {
 	ok, err := db.IsMember(r.chatId)
 	if err != nil {
+		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 		return
 	}
 	if !ok {
@@ -427,10 +461,11 @@ func (r *responce) showMenu() {
 	msg := tgbotapi.NewMessage(r.chatId, "Приветствую! Выберите один из вариантов")
 
 	ok, err = db.IsAdmin(r.chatId)
-
 	if err != nil {
+		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 		return
 	}
+
 	if ok {
 		menuKeyboard.InlineKeyboard = append(menuKeyboard.InlineKeyboard,
 			tgbotapi.NewInlineKeyboardRow(
@@ -441,57 +476,62 @@ func (r *responce) showMenu() {
 	}
 
 	msg.ReplyMarkup = &menuKeyboard
-	if _, err = r.bot.Send(msg); err != nil {
-		fmt.Println(err)
-		return
-	}
+	_, _ = r.bot.Send(msg)
 }
 
-func (r *responce) join() {
+func (r *response) join() {
 	msg := tgbotapi.NewMessage(r.chatId, "")
 	ok, err := db.IsMember(r.chatId)
 	if err != nil {
+		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 		return
 	}
 	if ok {
 		msg.Text = "Вы уже являетесь участником фонда"
-		if _, err = r.bot.Send(msg); err != nil {
-			fmt.Println(err)
-		}
+		_, _ = r.bot.Send(msg)
 		return
 	}
 	msg.Text = "Введите тег фонда. Если у вас нет тега, запросите его у администратора фонда."
 	if _, err = r.bot.Send(msg); err != nil {
-		fmt.Println(err)
 		return
 	}
-	tag := r.waitingResponce("text").Text
+	answer, err := r.waitingResponse("text")
+	if err != nil {
+		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
+	}
+	tag := answer.Text
 
 	ok, err = db.ExistsFund(tag)
 	if err != nil {
+		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 		return
 	}
 	if !ok {
 		msg.Text = "Фонд с таким тегом не найден."
 	} else {
-		err = db.AddMember(tag, r.chatId, false, r.username, r.getName())
+
+		name, err := r.getName()
 		if err != nil {
+			r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 			return
+		} else {
+			err = db.AddMember(tag, r.chatId, false, r.username, name)
+			if err != nil {
+				r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
+				return
+			}
+			msg.Text = "Вы успешно присоединились к фонду."
 		}
-		msg.Text = "Вы успешно присоединились к фонду."
 	}
 
-	if _, err = r.bot.Send(msg); err != nil {
-		fmt.Println(err)
-		return
-	}
-
+	_, _ = r.bot.Send(msg)
 }
 
-func (r *responce) confirmationCreationNewFund() {
+func (r *response) confirmationCreationNewFund() {
 	msg := tgbotapi.NewMessage(r.chatId, "")
 	ok, err := db.IsMember(r.chatId)
 	if err != nil {
+		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 		return
 	}
 	if ok {
@@ -506,15 +546,14 @@ func (r *responce) confirmationCreationNewFund() {
 		)
 		msg.ReplyMarkup = numericKeyboard
 	}
-	if _, err = r.bot.Send(msg); err != nil {
-		panic(err)
-	}
+	_, _ = r.bot.Send(msg)
 }
 
-func (r *responce) creatingNewFund() {
+func (r *response) creatingNewFund() {
 	var err error
 	sum, err := r.getFloatFromUser("Введите начальную сумму фонда без указания валюты.")
 	if err != nil {
+		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 		return
 	}
 
@@ -524,6 +563,7 @@ func (r *responce) creatingNewFund() {
 
 		ok, err := db.DoesTagExist(tag)
 		if err != nil {
+			r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 			return
 		}
 		if !ok {
@@ -533,31 +573,53 @@ func (r *responce) creatingNewFund() {
 	}
 
 	err = db.CreateFund(tag, sum)
+	name, err := r.getName()
+
 	if err != nil {
+		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 		return
 	}
-	name := r.getName()
+
 	err = db.AddMember(tag, r.chatId, true, r.username, name)
 	if err != nil {
+		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
 		return
 	}
 
 	msg := tgbotapi.NewMessage(r.chatId, fmt.Sprintf("Новый фонд создан успешно! Присоединиться к фонду можно, используя тег: %s \nВнимание! Не показывайте этот тег посторонним людям.", tag))
-	if _, err = r.bot.Send(msg); err != nil {
-		return
-	}
+	_, _ = r.bot.Send(msg)
 
 }
 
-func (r *responce) waitingResponce(obj string) *tgbotapi.Message {
-	waitingList[r.chatId] = map[string]chan *tgbotapi.Message{}
-	defer delete(waitingList, r.chatId)
+func (r *response) waitingResponse(obj string) (*tgbotapi.Message, error) {
 
-	waitingList[r.chatId][obj] = make(chan *tgbotapi.Message)
-	defer close(waitingList[r.chatId][obj])
+	waitingList[r.chatId] = make(chan *tgbotapi.Message)
+	defer func() {
+		close(waitingList[r.chatId])
+		delete(waitingList, r.chatId)
+	}()
 
-	return <-waitingList[r.chatId][obj]
+	var typeOfMessage string
+	var answer *tgbotapi.Message
 
+	for i := 0; i < 3; i++ {
+		answer = <-waitingList[r.chatId]
+		if answer.Photo != nil || answer.Document != nil {
+			typeOfMessage = "attachment"
+		} else {
+			typeOfMessage = "text"
+		}
+
+		if obj != typeOfMessage {
+			if i < 2 {
+				r.notificationAboutError(fmt.Sprintf("Вы ввели что-то не то. Количество доступных попыток: %d", 2-i))
+			}
+			continue
+		}
+		return answer, nil
+	}
+
+	return answer, errors.New("The number of attempts exceeded\n")
 }
 
 func newTag() string {
@@ -569,10 +631,20 @@ func newTag() string {
 	return string(result)
 }
 
-func (r *responce) getName() string {
+func (r *response) getName() (string, error) {
 	msg := tgbotapi.NewMessage(r.chatId, "Представьтесь, пожалуйста. Введите ФИО")
 	if _, err := r.bot.Send(msg); err != nil {
-		return ""
+		return "", err
 	}
-	return r.waitingResponce("text").Text
+	answer, err := r.waitingResponse("text")
+	if err != nil {
+		return "", err
+	}
+	return answer.Text, nil
+}
+
+func (r *response) notificationAboutError(message string) {
+	msg := tgbotapi.NewMessage(r.chatId, message)
+	_, _ = r.bot.Send(msg)
+	return
 }

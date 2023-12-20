@@ -327,3 +327,19 @@ func ChangeStatusTransaction(idTransaction int, status string) error {
 
 	return nil
 }
+
+func CreateDebitingFunds(memberId int64, tag string, sum float64, comment string, purpose string, receipt string) (ok bool, err error) {
+	db, err := dbConnection()
+	if err != nil {
+		return
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("select * from  new_deb($1, $2, $3,$4,$5, $6)")
+	if err != nil {
+		return
+	}
+
+	err = stmt.QueryRow(tag, sum, comment, purpose, receipt, memberId).Scan(&ok)
+	return
+}
