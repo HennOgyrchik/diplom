@@ -7,7 +7,7 @@ import (
 )
 
 func dbConnection() (*sql.DB, error) {
-	connStr := "user=postgres password=111 dbname=postgres sslmode=disable host=192.168.0.103 port=5432" //как то убрать логин и пароль, заменить ip на имя контейнера
+	connStr := "user=postgres password=111 dbname=postgres sslmode=disable host=192.168.0.116 port=5432" //как то убрать логин и пароль, заменить ip на имя контейнера
 	db, err := sql.Open("postgres", connStr)
 
 	if err != nil {
@@ -58,59 +58,118 @@ func IsAdmin(memberId int64) (bool, error) {
 	return result, err
 }
 
-//func CreateFund(tag string, balance float64) error {
-//	db, err := dbConnection()
-//	if err != nil {
-//		return err
-//	}
-//	defer db.Close()
-//
-//	stmt, err := db.Prepare("insert into funds (tag,balance) values ($1,$2)")
-//	if err != nil {
-//		return err
-//	}
-//	_ = stmt.QueryRow(tag, balance)
-//	return err
-//}
-//
-//func DoesTagExist(tag string) (result bool, err error) {
-//	result = false
-//
-//	db, err := dbConnection()
-//	if err != nil {
-//		return
-//	}
-//	defer db.Close()
-//
-//	stmt, err := db.Prepare("select count(*) from funds where tag=$1")
-//	if err != nil {
-//		return
-//	}
-//
-//	var count int
-//	err = stmt.QueryRow(tag).Scan(&count)
-//	if (err != nil) || (count != 0) {
-//		return
-//	}
-//
-//	result = true
-//	return
-//}
-//
-//func AddMember(tag string, memberId int64, isAdmin bool, login string, name string) error {
-//	db, err := dbConnection()
-//	if err != nil {
-//		return err
-//	}
-//	defer db.Close()
-//
-//	stmt, err := db.Prepare("insert into members (tag_fund,member_id,admin,login,name) values ($1,$2,$3,$4,$5)")
-//	if err != nil {
-//		return err
-//	}
-//	_ = stmt.QueryRow(tag, memberId, isAdmin, login, name)
-//	return err
-//}
+func DoesTagExist(tag string) (bool, error) {
+	db, err := dbConnection()
+	if err != nil {
+		return false, err
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("select count(*) from funds where tag=$1")
+	if err != nil {
+		return false, err
+	}
+	defer stmt.Close()
+
+	var count int
+	err = stmt.QueryRow(tag).Scan(&count)
+	switch {
+	case err != nil:
+		return false, err
+	case count > 0:
+		return true, err
+	default:
+		return false, err
+	}
+}
+
+func CreateFund(tag string, balance float64) error {
+	db, err := dbConnection()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("insert into funds (tag,balance) values ($1,$2)")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	_ = stmt.QueryRow(tag, balance)
+	return err
+}
+
+func AddMember(tag string, memberId int64, isAdmin bool, login string, name string) error {
+	db, err := dbConnection()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("insert into members (tag_fund,member_id,admin,login,name) values ($1,$2,$3,$4,$5)")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	_ = stmt.QueryRow(tag, memberId, isAdmin, login, name)
+	return err
+}
+
+func DeleteFund(tag string) error {
+	db, err := dbConnection()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("delete from funds where tag=$1")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	_ = stmt.QueryRow(tag)
+	return err
+}
+
+func GetTag(memberId int64) (string, error) {
+	db, err := dbConnection()
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("select tag_fund from members where member_id=$1")
+	if err != nil {
+		return "", err
+	}
+	defer stmt.Close()
+
+	var tag string
+	err = stmt.QueryRow(memberId).Scan(&tag)
+	return tag, err
+}
+
+func ShowBalance(tag string) (float64, error) {
+	db, err := dbConnection()
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("select balance from funds where tag=$1")
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
+
+	var balance float64
+	err = stmt.QueryRow(tag).Scan(&balance)
+	return balance, err
+}
+
 //
 //func ExistsFund(tag string) (result bool, err error) {
 //	result = false
@@ -136,41 +195,7 @@ func IsAdmin(memberId int64) (bool, error) {
 //	result = true
 //	return
 //}
-//
-//func ShowBalance(tag string) (balance float64, err error) {
-//	balance = 0.0
-//
-//	db, err := dbConnection()
-//	if err != nil {
-//		return
-//	}
-//	defer db.Close()
-//
-//	stmt, err := db.Prepare("select balance from funds where tag=$1")
-//	if err != nil {
-//		return
-//	}
-//	err = stmt.QueryRow(tag).Scan(&balance)
-//	return
-//}
-//
-//func GetTag(memberId int64) (tag string, err error) {
-//	tag = ""
-//	db, err := dbConnection()
-//	if err != nil {
-//		return
-//	}
-//	defer db.Close()
-//
-//	stmt, err := db.Prepare("select tag_fund from members where member_id=$1")
-//	if err != nil {
-//		return
-//	}
-//
-//	err = stmt.QueryRow(memberId).Scan(&tag)
-//	return
-//}
-//
+
 //func CreateCashCollection(tag string, sum float64, status string, comment string, purpose string, closingDate string) (id int, err error) {
 //	db, err := dbConnection()
 //	if err != nil {

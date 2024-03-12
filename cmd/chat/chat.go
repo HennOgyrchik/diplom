@@ -1,11 +1,16 @@
 package chat
 
 import (
+	"errors"
 	"fmt"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"log"
+	"math/rand"
 	"project1/cmd/service"
 	"project1/db"
 	"regexp"
+	"strconv"
+	"time"
 )
 
 type Chat struct {
@@ -26,11 +31,11 @@ func (c *Chat) test() error { // 3 попытки на отправку
 	return err
 }
 
-func NewChat(username string, chatId int64, service *service.Service) *Chat {
+func NewChat(username string, chatId int64, service *service.Service, message *tgbotapi.Message) *Chat {
 	return &Chat{
 		username: username,
 		chatId:   chatId,
-		msg:      nil,
+		msg:      message,
 		Service:  service,
 	}
 }
@@ -43,7 +48,7 @@ func (c *Chat) GetMessage() *tgbotapi.Message {
 	return c.msg
 }
 
-// send 3 попытки на отправку, иначе ошибка
+// send 3 попытки на отправку, иначе удалить из списка ожидания и вернуть ошибку
 func (c *Chat) send(message tgbotapi.MessageConfig) error {
 	var err error
 
@@ -52,7 +57,13 @@ func (c *Chat) send(message tgbotapi.MessageConfig) error {
 			return nil
 		}
 	}
-	return err
+
+	wList := c.Service.GetWaitingList()
+	if _, ok := wList[c.chatId]; ok { //если ожидается ввод от пользователя, прекратить ожидание
+		c.Service.DeleteFromWaitingList(c.chatId)
+	}
+
+	return AttemptsExceeded
 }
 
 func (c *Chat) CommandSwitcher(query string) {
@@ -67,15 +78,15 @@ func (c *Chat) CommandSwitcher(query string) {
 	case cmd == "menu":
 		c.showMenu()
 	case cmd == "создать":
-		//c.confirmationCreationNewFund()
+		c.confirmationCreationNewFund()
 	case cmd == "присоединиться":
 		//c.join()
 	case cmd == "создать новый фонд":
-		//c.creatingNewFund()
+		c.creatingNewFund()
 	case cmd == "баланс":
-		//c.showBalance()
+		c.showBalance()
 	case cmd == "test":
-		c.test()
+		_ = c.test()
 	case cmd == "участники":
 		//c.getMembers()
 	case cmd == "новый сбор":
@@ -128,14 +139,14 @@ func (c *Chat) startMenu() {
 	msg := tgbotapi.NewMessage(c.chatId, "Приветствую! Выберите один из вариантов")
 	msg.ReplyMarkup = &startKeyboard
 
-	err := c.send(msg)
-	fmt.Println(err)
+	_ = c.send(msg)
 }
 
 func (c *Chat) showMenu() {
 	ok, err := db.IsMember(c.chatId)
 	if err != nil {
-		err = c.send(tgbotapi.NewMessage(c.chatId, "Произошла ошибка. Попробуйте еще раз."))
+		log.Println(time.Now(), c.chatId, err)
+		c.sendError()
 		return
 	}
 	if !ok {
@@ -160,7 +171,8 @@ func (c *Chat) showMenu() {
 
 	ok, err = db.IsAdmin(c.chatId)
 	if err != nil {
-		err = c.send(tgbotapi.NewMessage(c.chatId, "Произошла ошибка. Попробуйте еще раз."))
+		log.Println(time.Now(), c.chatId, err)
+		c.sendError()
 		return
 	}
 
@@ -176,6 +188,98 @@ func (c *Chat) showMenu() {
 
 	msg.ReplyMarkup = &menuKeyboard
 	_ = c.send(msg)
+}
+
+// confirmationCreationNewFund проверяет состоит ли пользователь в другом фонде, если не состоит, то запрашивает подтверждение операции
+func (c *Chat) confirmationCreationNewFund() {
+	msg := tgbotapi.NewMessage(c.chatId, "")
+
+	ok, err := db.IsMember(c.chatId)
+	if err != nil {
+		log.Println(time.Now(), c.chatId, err)
+		c.sendError()
+		return
+	}
+	if ok {
+		msg.Text = "Вы уже являетесь участником фонда"
+	} else {
+		msg.Text = "Вы уверены, что хотите создать новый фонд?"
+		var numericKeyboard = tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData("Да", "создать новый фонд"),
+				tgbotapi.NewInlineKeyboardButtonData("Нет", "start"),
+			),
+		)
+		msg.ReplyMarkup = numericKeyboard
+	}
+	_ = c.send(msg)
+}
+
+// creatingNewFund создает новый фонд
+func (c *Chat) creatingNewFund() {
+	sum, err := c.getFloatFromUser("Введите начальную сумму фонда")
+	switch {
+	case errors.Is(err, AttemptsExceeded):
+		_ = c.send(tgbotapi.NewMessage(c.chatId, "Превышено число попыток ввода"))
+		return
+	case err != nil:
+		log.Println(time.Now(), c.chatId, err)
+		c.sendError()
+		return
+	}
+
+	tag, err := newTag()
+	if err != nil {
+		log.Println(time.Now(), c.chatId, err)
+		c.sendError()
+	}
+
+	name, err := c.getName()
+	if err != nil {
+		log.Println(time.Now(), c.chatId, err)
+		c.sendError()
+		return
+	}
+
+	err = db.CreateFund(tag, sum)
+	if err != nil {
+		log.Println(time.Now(), c.chatId, err)
+		c.sendError()
+		return
+	}
+
+	err = db.AddMember(tag, c.chatId, true, c.username, name)
+	if err != nil {
+		err = db.DeleteFund(tag)
+		log.Println(time.Now(), c.chatId, err)
+		c.sendError()
+		return
+	}
+
+	err = c.send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Новый фонд создан успешно! Присоединиться к фонду можно, используя тег: %s \nВнимание! Не показывайте этот тег посторонним людям.", tag)))
+	if err != nil {
+		err = db.DeleteFund(tag)
+		log.Println(time.Now(), c.chatId, err)
+		return
+	}
+
+}
+
+func (c *Chat) showBalance() {
+	tag, err := db.GetTag(c.chatId)
+	if err != nil {
+		log.Println(time.Now(), c.chatId, err)
+		c.sendError()
+		return
+	}
+	balance, err := db.ShowBalance(tag)
+	if err != nil {
+		log.Println(time.Now(), c.chatId, err)
+		c.sendError()
+		return
+	}
+
+	_ = c.send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Текущий баланс: %.2f руб", balance)))
 }
 
 //
@@ -343,30 +447,7 @@ func (c *Chat) showMenu() {
 //
 //}
 //
-//func (r *response) getFloatFromUser(message string) (sum float64, err error) {
-//	msg := tgbotapi.NewMessage(r.chatId, message)
-//	if _, err = r.bot.Send(msg); err != nil {
-//		return
-//	}
-//
-//	for {
-//		var answer *tgbotapi.Message
-//
-//		answer, err = r.waitingResponse("text")
-//		if err != nil {
-//			return
-//		}
-//
-//		sum, err = strconv.ParseFloat(answer.Text, 64)
-//		if err != nil {
-//			r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
-//			continue
-//		}
-//		break
-//	}
-//	return
-//}
-//
+
 //func (r *response) createCashCollection() {
 //	sum, err := r.getFloatFromUser("Введите сумму сбора с одного участника.")
 //	if err != nil {
@@ -427,23 +508,6 @@ func (c *Chat) showMenu() {
 //	}
 //}
 //
-//func (r *response) showBalance() {
-//	tag, err := db.GetTag(r.chatId)
-//	if err != nil {
-//		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
-//		return
-//	}
-//	balance, err := db.ShowBalance(tag)
-//	if err != nil {
-//		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
-//		return
-//	}
-//	msg := tgbotapi.NewMessage(r.chatId, fmt.Sprintf("Текущий баланс: %.2f руб", balance))
-//	_, _ = r.bot.Send(msg)
-//
-//}
-//
-//
 //func (r *response) join() {
 //	msg := tgbotapi.NewMessage(r.chatId, "")
 //	ok, err := db.IsMember(r.chatId)
@@ -492,121 +556,7 @@ func (c *Chat) showMenu() {
 //	_, _ = r.bot.Send(msg)
 //}
 //
-//func (r *response) confirmationCreationNewFund() {
-//	msg := tgbotapi.NewMessage(r.chatId, "")
-//	ok, err := db.IsMember(r.chatId)
-//	if err != nil {
-//		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
-//		return
-//	}
-//	if ok {
-//		msg.Text = "Вы уже являетесь участником фонда"
-//	} else {
-//		msg.Text = "Вы уверены, что хотите создать новый фонд?"
-//		var numericKeyboard = tgbotapi.NewInlineKeyboardMarkup(
-//			tgbotapi.NewInlineKeyboardRow(
-//				tgbotapi.NewInlineKeyboardButtonData("Да", "создать новый фонд"),
-//				tgbotapi.NewInlineKeyboardButtonData("Нет", "start"),
-//			),
-//		)
-//		msg.ReplyMarkup = numericKeyboard
-//	}
-//	_, _ = r.bot.Send(msg)
-//}
 //
-//func (r *response) creatingNewFund() {
-//	var err error
-//	sum, err := r.getFloatFromUser("Введите начальную сумму фонда без указания валюты.")
-//	if err != nil {
-//		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
-//		return
-//	}
-//
-//	var tag string
-//	for i := 0; i < 10; i++ {
-//		tag = newTag()
-//
-//		ok, err := db.DoesTagExist(tag)
-//		if err != nil {
-//			r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
-//			return
-//		}
-//		if !ok {
-//			continue
-//		}
-//		break
-//	}
-//
-//	err = db.CreateFund(tag, sum)
-//	name, err := r.getName()
-//
-//	if err != nil {
-//		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
-//		return
-//	}
-//
-//	err = db.AddMember(tag, r.chatId, true, r.username, name)
-//	if err != nil {
-//		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
-//		return
-//	}
-//
-//	msg := tgbotapi.NewMessage(r.chatId, fmt.Sprintf("Новый фонд создан успешно! Присоединиться к фонду можно, используя тег: %s \nВнимание! Не показывайте этот тег посторонним людям.", tag))
-//	_, _ = r.bot.Send(msg)
-//
-//}
-//
-//func (r *response) waitingResponse(obj string) (*tgbotapi.Message, error) {
-//
-//	waitingList[r.chatId] = make(chan *tgbotapi.Message)
-//	defer func() {
-//		close(waitingList[r.chatId])
-//		delete(waitingList, r.chatId)
-//	}()
-//
-//	var typeOfMessage string
-//	var answer *tgbotapi.Message
-//
-//	for i := 0; i < 3; i++ {
-//		answer = <-waitingList[r.chatId]
-//		if answer.Photo != nil || answer.Document != nil {
-//			typeOfMessage = "attachment"
-//		} else {
-//			typeOfMessage = "text"
-//		}
-//
-//		if obj != typeOfMessage {
-//			if i < 2 {
-//				r.notificationAboutError(fmt.Sprintf("Вы ввели что-то не то. Количество доступных попыток: %d", 2-i))
-//			}
-//			continue
-//		}
-//		return answer, nil
-//	}
-//
-//	return answer, errors.New("The number of attempts exceeded\n")
-//}
-//
-//func newTag() string {
-//	symbols := []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
-//	result := make([]byte, rand.Intn(5)+5)
-//	for i := range result {
-//		result[i] = symbols[rand.Intn(len(symbols))]
-//	}
-//	return string(result)
-//}
-//
-//func (r *response) getName() (string, error) {
-//	msg := tgbotapi.NewMessage(r.chatId, "Представьтесь, пожалуйста. Введите ФИО")
-//	if _, err := r.bot.Send(msg); err != nil {
-//		return "", err
-//	}
-//	answer, err := r.waitingResponse("text")
-//	if err != nil {
-//		return "", err
-//	}
-//	return answer.Text, nil
-//}
 //
 //func (r *response) notificationAboutError(message string) {
 //	if message == "" {
@@ -649,3 +599,100 @@ func (c *Chat) showMenu() {
 //	msg := tgbotapi.NewMessage(r.chatId, message)
 //	_, _ = r.bot.Send(msg)
 //}
+
+// getFloatFromUser получить вещественное число от пользователя
+func (c *Chat) getFloatFromUser(message string) (float64, error) {
+	var sum float64
+	if err := c.send(tgbotapi.NewMessage(c.chatId, message)); err != nil {
+		return sum, err
+	}
+
+	for i := 0; i < 3; i++ {
+		answer, err := c.getResponse("text")
+		if err != nil {
+			return sum, err
+		}
+
+		sum, err = strconv.ParseFloat(answer.Text, 64)
+		if err != nil {
+			msg := tgbotapi.NewMessage(c.chatId, "Неверный ввод. Повторите попытку")
+			if i == 2 {
+				msg.Text = ""
+			}
+			if err = c.send(msg); err != nil {
+				return sum, err
+			}
+			continue
+		}
+		return sum, nil
+	}
+	return sum, AttemptsExceeded
+}
+
+func (c *Chat) getName() (string, error) {
+	err := c.send(tgbotapi.NewMessage(c.chatId, "Представьтесь, пожалуйста. Введите ФИО"))
+	if err != nil {
+		return "", err
+	}
+
+	answer, err := c.getResponse("text")
+	if err != nil {
+		return "", err
+	}
+	return answer.Text, nil
+}
+
+// getResponse получить ответ от пользователя. typeOfResponse может быть attachment или text
+func (c *Chat) getResponse(typeOfResponse string) (*tgbotapi.Message, error) {
+	c.Service.WaitingResponse(c.chatId)
+	defer c.Service.StopWaiting(c.chatId)
+
+	var typeOfMessage string
+	var answer *tgbotapi.Message
+
+	for i := 0; i < 3; i++ {
+		userChan, _ := c.GetUserChan(c.chatId)
+
+		answer = <-userChan
+
+		if answer.Photo != nil || answer.Document != nil {
+			typeOfMessage = "attachment"
+		} else {
+			typeOfMessage = "text"
+		}
+
+		if typeOfResponse != typeOfMessage {
+			if i < 2 {
+				if err := c.send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Вы ввели что-то не то. Количество доступных попыток: %d", 2-i))); err != nil {
+					return nil, err
+				}
+			}
+			continue
+		}
+		return answer, nil
+	}
+
+	return answer, AttemptsExceeded
+}
+
+func (c *Chat) sendError() {
+	_ = c.send(tgbotapi.NewMessage(c.chatId, "Произошла ошибка. Повторите попытку позже"))
+}
+
+// newTag формирует новый тег. Выполняет проверку на существование. Если Тег уже существует формирует новый рекурсивно
+func newTag() (string, error) {
+	symbols := []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+	result := make([]byte, rand.Intn(5)+5)
+	for i := range result {
+		result[i] = symbols[rand.Intn(len(symbols))]
+	}
+
+	tag := string(result)
+
+	ok, err := db.DoesTagExist(tag)
+	if err != nil || !ok {
+		return tag, err
+	} else {
+		return newTag()
+	}
+}
