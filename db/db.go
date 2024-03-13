@@ -3,8 +3,8 @@ package db
 import (
 	"database/sql"
 	_ "github.com/lib/pq"
-	"regexp"
 	_ "regexp"
+	"time"
 )
 
 func dbConnection() (*sql.DB, error) {
@@ -101,21 +101,42 @@ func CreateFund(tag string, balance float64) error {
 	return err
 }
 
-func AddMember(tag string, memberId int64, isAdmin bool, login string, name string) error {
+func GetAdminFund(tag string) (int64, error) {
 	db, err := dbConnection()
 	if err != nil {
-		return err
+		return -1, err
 	}
 	defer db.Close()
 
-	stmt, err := db.Prepare("insert into members (tag,member_id,admin,login,name) values ($1,$2,$3,$4,$5)")
+	stmt, err := db.Prepare("select member_id from members where tag = $1 and admin = true")
 	if err != nil {
-		return err
+		return -1, err
 	}
 	defer stmt.Close()
 
-	_ = stmt.QueryRow(tag, memberId, isAdmin, login, name)
-	return err
+	var memberId int64
+
+	err = stmt.QueryRow(tag).Scan(&memberId)
+	return memberId, err
+}
+
+// ShowBalance возвращает баланс фонда
+func ShowBalance(tag string) (float64, error) {
+	db, err := dbConnection()
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("select balance from funds where tag=$1")
+	if err != nil {
+		return 0, err
+	}
+	defer stmt.Close()
+
+	var balance float64
+	err = stmt.QueryRow(tag).Scan(&balance)
+	return balance, err
 }
 
 // DeleteFund удаляет фонд
@@ -156,35 +177,41 @@ func GetTag(memberId int64) (string, error) {
 	return tag, err
 }
 
-// ShowBalance возвращает баланс фонда
-func ShowBalance(tag string) (float64, error) {
+type Member struct {
+	ID      int64
+	Tag     string
+	IsAdmin bool
+	Login   string
+	Name    string
+}
+
+func AddMember(member Member) error {
 	db, err := dbConnection()
 	if err != nil {
-		return 0, err
+		return err
 	}
 	defer db.Close()
 
-	stmt, err := db.Prepare("select balance from funds where tag=$1")
+	stmt, err := db.Prepare("insert into members (tag,member_id,admin,login,name) values ($1,$2,$3,$4,$5)")
 	if err != nil {
-		return 0, err
+		return err
 	}
 	defer stmt.Close()
 
-	var balance float64
-	err = stmt.QueryRow(tag).Scan(&balance)
-	return balance, err
+	_ = stmt.QueryRow(member.Tag, member.ID, member.IsAdmin, member.Login, member.Name)
+	return err
 }
 
-// GetMembers возвращает список id пользователей фонда
-func GetMembers(tag string) ([]int64, error) {
-	var members []int64
+// GetMembers возвращает список пользователей фонда
+func GetMembers(tag string) ([]Member, error) {
+	var members []Member
 	db, err := dbConnection()
 	if err != nil {
 		return members, err
 	}
 	defer db.Close()
 
-	stmt, err := db.Prepare("select member_id from members where tag =$1")
+	stmt, err := db.Prepare("select member_id, tag, admin, login, name from members where tag =$1")
 	if err != nil {
 		return members, err
 	}
@@ -197,8 +224,8 @@ func GetMembers(tag string) ([]int64, error) {
 	defer rows.Close()
 
 	for rows.Next() {
-		var member int64
-		if err = rows.Scan(&member); err != nil {
+		var member Member
+		if err = rows.Scan(&member.ID, &member.Tag, &member.IsAdmin, &member.Login, &member.Name); err != nil {
 			return members, err
 		}
 		members = append(members, member)
@@ -207,67 +234,160 @@ func GetMembers(tag string) ([]int64, error) {
 }
 
 // GetInfoAboutMember возвращает полную информацию о пользователе
-func GetInfoAboutMember(memberId int64) (isAdmin bool, login string, name string, err error) {
+func GetInfoAboutMember(memberId int64) (Member, error) {
+	member := Member{ID: memberId}
+
 	db, err := dbConnection()
 	if err != nil {
-		return
+		return member, err
 	}
 	defer db.Close()
 
-	stmt, err := db.Prepare("select admin,login,name from members where member_id = $1")
+	stmt, err := db.Prepare("select tag,admin,login,name from members where member_id = $1")
 	if err != nil {
-		return
+		return member, err
 	}
 	defer stmt.Close()
 
-	err = stmt.QueryRow(memberId).Scan(&isAdmin, &login, &name)
-	return
+	err = stmt.QueryRow(memberId).Scan(&member.Tag, &member.IsAdmin, &member.Login, &member.Name)
+	return member, err
 }
 
-func CreateCashCollection(tag string, sum float64, status string, comment string, purpose string, closingDate string) (id int, err error) {
+type CashCollection struct {
+	ID         int
+	Tag        string
+	Sum        float64
+	Status     string
+	Comment    string
+	CreateDate time.Time
+	CloseDate  time.Time
+	Purpose    string
+}
+
+func CreateCashCollection(cashCollection CashCollection) (int, error) {
+
 	db, err := dbConnection()
 	if err != nil {
-		return
+		return -1, err
 	}
 	defer db.Close()
 
-	var datePat = regexp.MustCompile(`^\d-\d-\d.`)
 	var stmt *sql.Stmt
+	var id int
 
-	if datePat.MatchString(closingDate) {
-		stmt, err = db.Prepare("insert into cash_collections (tag, sum, status, comment,purpose, close_date) values ($1,$2,$3,$4,$5,$6) RETURNING id")
-		if err != nil {
-			return
-		}
-		err = stmt.QueryRow(tag, sum, status, comment, purpose, closingDate).Scan(&id)
-	} else {
-		stmt, err = db.Prepare("insert into cash_collections (tag, sum, status, comment,purpose) values ($1,$2,$3,$4,$5) RETURNING id")
-		if err != nil {
-			return
-		}
-		err = stmt.QueryRow(tag, sum, status, comment, purpose).Scan(&id)
+	stmt, err = db.Prepare("insert into cash_collections (tag, sum, status, comment,purpose,create_date, close_date) values ($1,$2,$3,$4,$5,$6,$7) RETURNING id")
+	if err != nil {
+		return -1, err
 	}
+	err = stmt.QueryRow(cashCollection.Tag, cashCollection.Sum, cashCollection.Status, cashCollection.Comment, cashCollection.Purpose, cashCollection.CreateDate.Format(time.DateOnly), cashCollection.CloseDate.Format(time.DateOnly)).Scan(&id)
 
 	_ = stmt.Close()
-	return
+	return id, nil
 
 }
 
-func InfoAboutCashCollection(idCollection int) (sum float64, purpose string, err error) {
+func InfoAboutCashCollection(idCashCollection int) (CashCollection, error) {
+	cc := CashCollection{ID: idCashCollection}
+
 	db, err := dbConnection()
 	if err != nil {
-		return
+		return cc, err
 	}
 	defer db.Close()
 
-	stmt, err := db.Prepare("select sum, purpose from cash_collections where id =$1")
+	stmt, err := db.Prepare("select tag, sum, status, comment, create_date, close_date, purpose from cash_collections where id =$1")
 	if err != nil {
-		return
+
+		return cc, err
 	}
 	defer stmt.Close()
 
-	err = stmt.QueryRow(idCollection).Scan(&sum, &purpose)
-	return
+	err = stmt.QueryRow(idCashCollection).Scan(&cc.Tag, &cc.Sum, &cc.Status, &cc.Comment, &cc.CreateDate, &cc.CloseDate, &cc.Purpose)
+	return cc, err
+}
+
+func UpdateStatusCashCollection(idCashCollection int) error {
+
+	db, err := dbConnection()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("call check_debtors($1)")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	_ = stmt.QueryRow(idCashCollection)
+
+	return nil
+}
+
+type Transaction struct {
+	ID               int
+	CashCollectionID int
+	Sum              float64
+	Type             string
+	Status           string
+	Receipt          string
+	MemberID         int64
+	Date             time.Time
+}
+
+func InfoAboutTransaction(idTransaction int) (Transaction, error) {
+	db, err := dbConnection()
+	if err != nil {
+		return Transaction{}, err
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("select * from transactions where id = $1")
+	if err != nil {
+		return Transaction{}, err
+	}
+	defer stmt.Close()
+
+	var t Transaction
+	err = stmt.QueryRow(idTransaction).Scan(&t.ID, &t.CashCollectionID, &t.Sum, &t.Type, &t.Status, &t.Receipt, &t.MemberID, &t.Date)
+
+	return t, err
+}
+
+func InsertInTransactions(transaction Transaction) (int, error) {
+	db, err := dbConnection()
+	if err != nil {
+		return -1, err
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("insert into transactions (cash_collection_id, sum, type, status,receipt, member_id, date) values ($1,$2,$3,$4,$5,$6,$7) RETURNING id")
+	if err != nil {
+		return -1, err
+	}
+
+	var id int
+	_ = stmt.QueryRow(transaction.CashCollectionID, transaction.Sum, transaction.Type, transaction.Status, transaction.Receipt, transaction.MemberID, transaction.Date.Format(time.DateOnly)).Scan(&id)
+	return id, nil
+}
+
+func ChangeStatusTransaction(idTransaction int, status string) error {
+	db, err := dbConnection()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("update transactions set status = $1 where id= $2")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	_ = stmt.QueryRow(status, idTransaction)
+
+	return nil
 }
 
 //
@@ -296,71 +416,6 @@ func InfoAboutCashCollection(idCollection int) (sum float64, purpose string, err
 //	return
 //}
 
-//func InsertInTransactions(cashCollectionId int, sum float64, typeOfTransaction string, status string, pathToReceipt string, memberId int64) (id int, err error) {
-//	id = -1
-//	db, err := dbConnection()
-//	if err != nil {
-//		return
-//	}
-//	defer db.Close()
-//
-//	stmt, err := db.Prepare("insert into transactions (cash_collection_id, sum, type, status,receipt, member_id) values ($1,$2,$3,$4,$5,$6) RETURNING id")
-//	if err != nil {
-//		return
-//	}
-//	_ = stmt.QueryRow(cashCollectionId, sum, typeOfTransaction, status, pathToReceipt, memberId).Scan(&id)
-//	return
-//}
-//
-//func GetAdminFund(tag string) (memberId int64, err error) {
-//	db, err := dbConnection()
-//	if err != nil {
-//		return
-//	}
-//	defer db.Close()
-//
-//	stmt, err := db.Prepare("select member_id from members where tag_fund = $1 and admin = true")
-//	if err != nil {
-//		return
-//	}
-//
-//	err = stmt.QueryRow(tag).Scan(&memberId)
-//	return
-//}
-//
-//func InfoAboutTransaction(idTransaction int) (status string, typeOfTransaction string, pathToReceipt string, memberId int64, sum float64, err error) {
-//	db, err := dbConnection()
-//	if err != nil {
-//		return
-//	}
-//	defer db.Close()
-//
-//	stmt, err := db.Prepare("select status,type,receipt,member_id, sum from transactions where id = $1")
-//	if err != nil {
-//		return
-//	}
-//
-//	err = stmt.QueryRow(idTransaction).Scan(&status, &typeOfTransaction, &pathToReceipt, &memberId, &sum)
-//	return
-//}
-
-//
-//func ChangeStatusTransaction(idTransaction int, status string) error {
-//	db, err := dbConnection()
-//	if err != nil {
-//		return err
-//	}
-//	defer db.Close()
-//
-//	stmt, err := db.Prepare("update transactions set status = $1 where id= $2")
-//	if err != nil {
-//		return err
-//	}
-//
-//	_ = stmt.QueryRow(status, idTransaction)
-//
-//	return nil
-//}
 //
 //func CreateDebitingFunds(memberId int64, tag string, sum float64, comment string, purpose string, receipt string) (ok bool, err error) {
 //	db, err := dbConnection()

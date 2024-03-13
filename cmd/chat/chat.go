@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Chat struct {
@@ -62,10 +63,10 @@ func (c *Chat) send(message tgbotapi.MessageConfig) error {
 }
 
 func (c *Chat) CommandSwitcher(query string) {
-	var paymentPat = regexp.MustCompile(`^оплатить\s\d*.`)
-	var rejectionPat = regexp.MustCompile(`^отказ\s\d*.`)
-	var waitingPat = regexp.MustCompile(`^ожидание\s\d*.`)
-	var acceptPat = regexp.MustCompile(`^подтвердить\s\d*.`)
+	var paymentPat = regexp.MustCompile(`^payment\s\d*.`)
+	var rejectionPat = regexp.MustCompile(`^reject\s\d*.`)
+	var waitingPat = regexp.MustCompile(`^wait\s\d*.`)
+	var acceptPat = regexp.MustCompile(`^accept\s\d*.`)
 
 	switch cmd := query; {
 	case cmd == "start":
@@ -82,40 +83,41 @@ func (c *Chat) CommandSwitcher(query string) {
 		c.showBalance()
 	case cmd == "test":
 		_ = c.test()
-	case cmd == "участники":
+	case cmd == "getMembers":
 		c.getMembers()
 	case cmd == "createCashCollection":
 		c.createCashCollection()
 	case cmd == "createDebitingFunds":
 		//c.createDebitingFunds()
 	case paymentPat.MatchString(cmd): // оплата
-		//cashCollectionId, err := strconv.Atoi(strings.Split(cmd, " ")[1])
-		//if err != nil {
-		//	c.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
-		//	return
-		//}
-		//c.payment(cashCollectionId)
+		cashCollectionId, err := strconv.Atoi(strings.Split(cmd, " ")[1])
+		if err != nil {
+			c.sendAnyError()
+			return
+		}
+		c.payment(cashCollectionId)
 	case acceptPat.MatchString(cmd): // подтверждение оплаты
-		//idTransaction, err := strconv.Atoi(strings.Split(cmd, " ")[1])
-		//if err != nil {
-		//	c.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
-		//	return
-		//}
-		//c.changeStatusOfTransaction(idTransaction, "подтвержден")
+		idTransaction, err := strconv.Atoi(strings.Split(cmd, " ")[1])
+		if err != nil {
+			c.writeToLog("CommandSwitcher/acceptPat", err)
+			c.sendAnyError()
+			return
+		}
+		c.changeStatusOfTransaction(idTransaction, "подтвержден")
 	case waitingPat.MatchString(cmd): // ожидание оплаты
-		//idTransaction, err := strconv.Atoi(strings.Split(cmd, " ")[1])
-		//if err != nil {
-		//	c.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
-		//	return
-		//}
-		//c.changeStatusOfTransaction(idTransaction, "ожидание")
+		idTransaction, err := strconv.Atoi(strings.Split(cmd, " ")[1])
+		if err != nil {
+			c.writeToLog("CommandSwitcher/waitingPat", err)
+			return
+		}
+		c.changeStatusOfTransaction(idTransaction, "ожидание")
 	case rejectionPat.MatchString(cmd): // отказ оплаты
-		//idTransaction, err := strconv.Atoi(strings.Split(cmd, " ")[1])
-		//if err != nil {
-		//	c.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
-		//	return
-		//}
-		//c.changeStatusOfTransaction(idTransaction, "отказ")
+		idTransaction, err := strconv.Atoi(strings.Split(cmd, " ")[1])
+		if err != nil {
+			c.writeToLog("CommandSwitcher/rejectionPat", err)
+			return
+		}
+		c.changeStatusOfTransaction(idTransaction, "отказ")
 	default:
 		_ = c.send(tgbotapi.NewMessage(c.chatId, "Я не знаю такую команду"))
 	}
@@ -237,7 +239,13 @@ func (c *Chat) createNewFund() {
 		return
 	}
 
-	if err = db.AddMember(tag, c.chatId, true, c.username, name); err != nil {
+	if err = db.AddMember(db.Member{
+		ID:      c.chatId,
+		Tag:     tag,
+		IsAdmin: true,
+		Login:   c.username,
+		Name:    name,
+	}); err != nil {
 		c.writeToLog("createNewFund/AddMember", err)
 		err = db.DeleteFund(tag)
 		c.writeToLog("createNewFund/DeleteFund", err)
@@ -312,8 +320,13 @@ func (c *Chat) join() {
 		return
 	}
 
-	err = db.AddMember(tag, c.chatId, false, c.username, name)
-	if err != nil {
+	if err = db.AddMember(db.Member{
+		ID:      c.chatId,
+		Tag:     tag,
+		IsAdmin: false,
+		Login:   c.username,
+		Name:    name,
+	}); err != nil {
 		c.writeToLog("join/addMember", err)
 		c.sendAnyError()
 		return
@@ -330,7 +343,7 @@ func (c *Chat) getMembers() {
 		return
 	}
 
-	idMembers, err := db.GetMembers(tag)
+	members, err := db.GetMembers(tag)
 	if err != nil {
 		c.writeToLog("getMembers", err)
 		c.sendAnyError()
@@ -341,18 +354,12 @@ func (c *Chat) getMembers() {
 
 	strBuilder.WriteString("Список участников:\n")
 
-	for i, id := range idMembers {
-		isAdmin, login, name, err := db.GetInfoAboutMember(id)
-		if err != nil {
-			c.writeToLog("getMembers/getInfoAboutMember", err)
-			c.sendAnyError()
-			return
-		}
+	for i, member := range members {
 		admin := ""
-		if isAdmin {
+		if member.IsAdmin {
 			admin = "Администратор"
 		}
-		strBuilder.WriteString(fmt.Sprintf("%d. %s (@%s) %s\n", i+1, name, login, admin))
+		strBuilder.WriteString(fmt.Sprintf("%d. %s (@%s) %s\n", i+1, member.Name, member.Login, admin))
 
 	}
 
@@ -384,7 +391,14 @@ func (c *Chat) createCashCollection() {
 		return
 	}
 
-	id, err := db.CreateCashCollection(tag, sum, "открыт", fmt.Sprintf("Инициатор: %s", c.username), answer.Text, "")
+	id, err := db.CreateCashCollection(db.CashCollection{
+		Tag:        tag,
+		Sum:        sum,
+		Status:     "открыт",
+		Comment:    fmt.Sprintf("Инициатор: %s", c.username),
+		Purpose:    answer.Text,
+		CreateDate: time.Now(),
+	})
 	if err != nil {
 		c.writeToLog("createCashCollection/CreateCashCollection", err)
 		c.sendAnyError()
@@ -403,7 +417,7 @@ func (c *Chat) collectionNotification(idCollection int, tagFund string) {
 		c.sendAnyError()
 		return
 	}
-	sum, purpose, err := db.InfoAboutCashCollection(idCollection)
+	cc, err := db.InfoAboutCashCollection(idCollection)
 	if err != nil {
 		c.writeToLog("collectionNotification/InfoAboutCashCollection", err)
 		c.sendAnyError()
@@ -412,15 +426,124 @@ func (c *Chat) collectionNotification(idCollection int, tagFund string) {
 
 	var paymentKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Оплатить", fmt.Sprintf("оплатить %d", idCollection)),
+			tgbotapi.NewInlineKeyboardButtonData("Оплатить", fmt.Sprintf("payment %d", idCollection)),
 		),
 	)
 
-	for _, memberId := range members {
-		msg := tgbotapi.NewMessage(memberId, fmt.Sprintf("Иницирован новый сбор.\nСумма к оплате: %.2f\nНазначение: %s", sum, purpose))
+	for _, member := range members {
+		msg := tgbotapi.NewMessage(member.ID, fmt.Sprintf("Иницирован новый сбор.\nСумма к оплате: %.2f\nНазначение: %s", cc.Sum, cc.Purpose))
 		msg.ReplyMarkup = &paymentKeyboard
 		_ = c.send(msg)
 	}
+}
+
+func (c *Chat) payment(cashCollectionId int) {
+	cc, err := db.InfoAboutCashCollection(cashCollectionId)
+	if err != nil {
+		c.writeToLog("payment/InfoAboutCashCollection", err)
+		c.sendAnyError()
+		return
+	}
+
+	sum, err := c.getFloatFromUser("Введите сумму пополнения")
+	if err != nil {
+		c.sendAttemptsExceededError()
+		return
+	}
+
+	if sum < cc.Sum {
+		_ = c.send(tgbotapi.NewMessage(c.chatId, "Вы не можете оплатить сумму меньше необходимой."))
+		return
+	}
+
+	idTransaction, err := db.InsertInTransactions(db.Transaction{
+		CashCollectionID: cashCollectionId,
+		Sum:              sum,
+		Type:             "пополнение",
+		Status:           "ожидание",
+		Receipt:          "",
+		MemberID:         c.chatId,
+		Date:             time.Now(),
+	})
+	if err != nil {
+		c.writeToLog("payment/InsertInTransactions", err)
+		c.sendAnyError()
+		return
+	}
+
+	_ = c.send(tgbotapi.NewMessage(c.chatId, "Ваша оплата добавлена в очередь на подтверждение"))
+	c.paymentNotification(idTransaction, sum)
+}
+
+// paymentNotification отправить запрос на подтверждение оплаты администратору
+func (c *Chat) paymentNotification(idTransaction int, sum float64) { //доделать
+	tag, err := db.GetTag(c.chatId)
+	if err != nil {
+		c.writeToLog("paymentNotification/GetTag", err)
+		c.sendAnyError()
+		return
+	}
+	adminId, err := db.GetAdminFund(tag)
+	if err != nil {
+		c.writeToLog("paymentNotification/GetAdminFund", err)
+		c.sendAnyError()
+		return
+	}
+
+	member, err := db.GetInfoAboutMember(c.chatId)
+	if err != nil {
+		c.writeToLog("paymentNotification/GetInfoAboutMember", err)
+		c.sendAnyError()
+		return
+	}
+
+	var okKeyboard = tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Подтвердить", fmt.Sprintf("accept %d", idTransaction)),
+			tgbotapi.NewInlineKeyboardButtonData("Отказ", fmt.Sprintf("reject %d", idTransaction)),
+			tgbotapi.NewInlineKeyboardButtonData("Ожидание", fmt.Sprintf("wait %d", idTransaction)),
+		),
+	)
+
+	msg := tgbotapi.NewMessage(adminId, fmt.Sprintf("Подтвердите зачисление средств на счет фонда.\nСумма: %.2f\nОтправитель: %s", sum, member.Name))
+	msg.ReplyMarkup = &okKeyboard
+	_ = c.send(msg)
+
+}
+
+// changeStatusOfTransaction изменение статуса транзакции
+func (c *Chat) changeStatusOfTransaction(idTransaction int, status string) {
+	err := db.ChangeStatusTransaction(idTransaction, status)
+	if err != nil {
+		c.writeToLog("changeStatusOfTransaction", err)
+		c.sendAnyError()
+		return
+	}
+
+	_ = c.send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Статус оплаты: %s", status)))
+
+	t, err := db.InfoAboutTransaction(idTransaction)
+	if err != nil {
+		c.writeToLog("changeStatusOfTransaction/InfoAboutTransaction", err)
+	}
+
+	if err = db.UpdateStatusCashCollection(t.CashCollectionID); err != nil {
+		fmt.Println(err)
+		c.writeToLog("changeStatusOfTransaction/CheckDebtors", err)
+	}
+
+	c.paymentChangeStatusNotification(idTransaction)
+}
+
+func (c *Chat) paymentChangeStatusNotification(idTransaction int) {
+	t, err := db.InfoAboutTransaction(idTransaction)
+	if err != nil {
+		c.writeToLog("paymentChangeStatusNotification", err)
+		c.sendAnyError()
+		return
+	}
+
+	_ = c.send(tgbotapi.NewMessage(t.MemberID, fmt.Sprintf("Статус оплаты изменен на: %s", t.Status)))
 }
 
 //
@@ -506,99 +629,6 @@ func (c *Chat) collectionNotification(idCollection int, tagFund string) {
 //	msg.Text = "Списание проведено успешно."
 //	_, _ = r.bot.Send(msg)
 //
-//}
-//
-//func (r *response) changeStatusOfTransaction(idTransaction int, status string) {
-//	err := db.ChangeStatusTransaction(idTransaction, status)
-//	if err != nil {
-//		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
-//		return
-//	}
-//	msg := tgbotapi.NewMessage(r.chatId, fmt.Sprintf("Статус оплаты: %s", status))
-//	_, _ = r.bot.Send(msg)
-//
-//	r.paymentChangeStatusNotification(idTransaction)
-//}
-//
-//func (r *response) paymentChangeStatusNotification(idTransaction int) {
-//	status, _, _, memberId, _, err := db.InfoAboutTransaction(idTransaction)
-//	if err != nil {
-//		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
-//		return
-//	}
-//	msg := tgbotapi.NewMessage(memberId, fmt.Sprintf("Статус оплаты изменен на: %s", status))
-//	_, _ = r.bot.Send(msg)
-//}
-//
-//func (r *response) payment(cashCollectionId int) {
-//	target, _, err := db.InfoAboutCashCollection(cashCollectionId)
-//	if err != nil {
-//		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
-//		return
-//	}
-//
-//	sum, err := r.getFloatFromUser("Введите сумму пополнения.")
-//	if err != nil {
-//		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
-//		return
-//	}
-//
-//	if sum < target {
-//		_, _ = r.bot.Send(tgbotapi.NewMessage(r.chatId, "Вы не можете оплатить сумму меньше необходимой."))
-//		return
-//	}
-//
-//	idTransaction, err := db.InsertInTransactions(cashCollectionId, sum, "пополнение", "ожидание", "", r.chatId)
-//	if err != nil {
-//		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
-//		return
-//	}
-//
-//	msg := tgbotapi.NewMessage(r.chatId, "Ваша оплата добавлена в очередь на подтверждение")
-//	_, _ = r.bot.Send(msg)
-//	r.paymentNotification(idTransaction)
-//}
-//
-//func (r *response) paymentNotification(idTransaction int) { //доделать
-//	tag, err := db.GetTag(r.chatId)
-//	if err != nil {
-//		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
-//		return
-//	}
-//	adminId, err := db.GetAdminFund(tag)
-//	if err != nil {
-//		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
-//		return
-//	}
-//
-//	var okKeyboard = tgbotapi.NewInlineKeyboardMarkup(
-//		tgbotapi.NewInlineKeyboardRow(
-//			tgbotapi.NewInlineKeyboardButtonData("Подтвердить", fmt.Sprintf("подтвердить %d", idTransaction)),
-//			tgbotapi.NewInlineKeyboardButtonData("Отказ", fmt.Sprintf("отказ %d", idTransaction)),
-//			tgbotapi.NewInlineKeyboardButtonData("Ожидание", fmt.Sprintf("ожидание %d", idTransaction)),
-//		),
-//	)
-//
-//	_, _, _, memberId, sum, err := db.InfoAboutTransaction(idTransaction)
-//
-//	_, _, name, err := db.GetInfoAboutMember(memberId)
-//
-//	msg := tgbotapi.NewMessage(adminId, fmt.Sprintf("Подтвердите зачисление средств на счет фонда.\nСумма: %.2f\nОтправитель: %s", sum, name))
-//	msg.ReplyMarkup = &okKeyboard
-//	_, _ = r.bot.Send(msg)
-//
-//}
-//
-
-//
-//func (r *response) notificationAboutError(message string) {
-//	if message == "" {
-//		message = "Произошла ошибка. Попробуйте позже"
-//	}
-//
-//	msg := tgbotapi.NewMessage(r.chatId, message)
-//	_, _ = r.bot.Send(msg)
-//	return
 //}
 //
 
