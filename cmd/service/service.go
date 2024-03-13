@@ -37,7 +37,10 @@ func (s *Service) GetUserChan(id int64) (chan *tgbotapi.Message, bool) {
 
 func (s *Service) DeleteFromWaitingList(id int64) {
 	s.wg.Lock()
-	delete(s.waitingList, id)
+	if ch, ok := s.waitingList[id]; ok {
+		close(ch)
+		delete(s.waitingList, id)
+	}
 	s.wg.Unlock()
 }
 
