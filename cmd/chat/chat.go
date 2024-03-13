@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 )
 
 type Chat struct {
@@ -199,9 +198,8 @@ func (c *Chat) confirmationCreateNewFund() {
 		return
 	}
 
-	var msg tgbotapi.MessageConfig
+	msg := tgbotapi.NewMessage(c.chatId, "Вы уверены, что хотите создать новый фонд?")
 
-	msg.Text = "Вы уверены, что хотите создать новый фонд?"
 	var numericKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("Да", "createNewFund"),
@@ -240,15 +238,16 @@ func (c *Chat) createNewFund() {
 	}
 
 	if err = db.AddMember(tag, c.chatId, true, c.username, name); err != nil {
+		c.writeToLog("createNewFund/AddMember", err)
 		err = db.DeleteFund(tag)
-		c.writeToLog("createNewFund/addMember", err)
+		c.writeToLog("createNewFund/DeleteFund", err)
 		c.sendAnyError()
 		return
 	}
 
 	if err = c.send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Новый фонд создан успешно! Присоединиться к фонду можно, используя тег: %s \nВнимание! Не показывайте этот тег посторонним людям.", tag))); err != nil {
 		if err = db.DeleteFund(tag); err != nil {
-			c.writeToLog("createNewFund/deleteFund", err)
+			c.writeToLog("createNewFund/DeleteFund", err)
 		}
 		return
 	}
@@ -380,12 +379,14 @@ func (c *Chat) createCashCollection() {
 
 	tag, err := db.GetTag(c.chatId)
 	if err != nil {
+		c.writeToLog("createCashCollection/GetTag", err)
 		c.sendAnyError()
 		return
 	}
 
 	id, err := db.CreateCashCollection(tag, sum, "открыт", fmt.Sprintf("Инициатор: %s", c.username), answer.Text, "")
 	if err != nil {
+		c.writeToLog("createCashCollection/CreateCashCollection", err)
 		c.sendAnyError()
 		return
 	}
@@ -398,22 +399,25 @@ func (c *Chat) createCashCollection() {
 func (c *Chat) collectionNotification(idCollection int, tagFund string) {
 	members, err := db.GetMembers(tagFund)
 	if err != nil {
+		c.writeToLog("collectionNotification/GetMembers", err)
 		c.sendAnyError()
 		return
 	}
 	sum, purpose, err := db.InfoAboutCashCollection(idCollection)
 	if err != nil {
+		c.writeToLog("collectionNotification/InfoAboutCashCollection", err)
 		c.sendAnyError()
 		return
 	}
 
-	for _, value := range members {
-		var paymentKeyboard = tgbotapi.NewInlineKeyboardMarkup(
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("Оплатить", fmt.Sprintf("оплатить %d", idCollection)),
-			),
-		)
-		msg := tgbotapi.NewMessage(value, fmt.Sprintf("Иницирован новый сбор.\nСумма к оплате: %.2f\nНазначение: %s", sum, purpose))
+	var paymentKeyboard = tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("Оплатить", fmt.Sprintf("оплатить %d", idCollection)),
+		),
+	)
+
+	for _, memberId := range members {
+		msg := tgbotapi.NewMessage(memberId, fmt.Sprintf("Иницирован новый сбор.\nСумма к оплате: %.2f\nНазначение: %s", sum, purpose))
 		msg.ReplyMarkup = &paymentKeyboard
 		_ = c.send(msg)
 	}
@@ -705,5 +709,5 @@ func newTag() (string, error) {
 }
 
 func (c *Chat) writeToLog(location string, err error) {
-	log.Println(time.Now(), c.chatId, fmt.Sprintf("%s: ", location), err)
+	log.Println(c.chatId, location, err)
 }

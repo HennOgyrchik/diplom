@@ -8,7 +8,6 @@ import (
 	"os/signal"
 	"project1/cmd/chat"
 	"project1/cmd/service"
-	"time"
 )
 
 func main() {
@@ -36,14 +35,14 @@ func main() {
 	token, err := getToken("token.txt") // проверить работает ли с несуществующим файлом
 	if err != nil {
 		fmt.Println(err)
-		log.Println(time.Now(), "main/getToken: ", err)
+		log.Println("main/getToken: ", err)
 		return
 	}
 
 	bot, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		fmt.Println(err)
-		log.Println(time.Now(), "main/newBotAPI: ", err)
+		log.Println("main/newBotAPI: ", err)
 		return
 	}
 	bot.Debug = false
@@ -51,7 +50,7 @@ func main() {
 	srv := service.NewService(bot)
 
 	fmt.Printf("Authorized on account %s", bot.Self.UserName)
-	log.Println(time.Now(), "Authorized on account ", bot.Self.UserName)
+	log.Println("Authorized on account ", bot.Self.UserName)
 
 	u := tgbotapi.NewUpdate(0)
 	u.Timeout = 60

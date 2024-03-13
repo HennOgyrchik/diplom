@@ -108,7 +108,7 @@ func AddMember(tag string, memberId int64, isAdmin bool, login string, name stri
 	}
 	defer db.Close()
 
-	stmt, err := db.Prepare("insert into members (tag_fund,member_id,admin,login,name) values ($1,$2,$3,$4,$5)")
+	stmt, err := db.Prepare("insert into members (tag,member_id,admin,login,name) values ($1,$2,$3,$4,$5)")
 	if err != nil {
 		return err
 	}
@@ -145,7 +145,7 @@ func GetTag(memberId int64) (string, error) {
 	}
 	defer db.Close()
 
-	stmt, err := db.Prepare("select tag_fund from members where member_id=$1")
+	stmt, err := db.Prepare("select tag from members where member_id=$1")
 	if err != nil {
 		return "", err
 	}
@@ -184,7 +184,7 @@ func GetMembers(tag string) ([]int64, error) {
 	}
 	defer db.Close()
 
-	stmt, err := db.Prepare("select member_id from members where tag_fund =$1")
+	stmt, err := db.Prepare("select member_id from members where tag =$1")
 	if err != nil {
 		return members, err
 	}
@@ -233,7 +233,6 @@ func CreateCashCollection(tag string, sum float64, status string, comment string
 
 	var datePat = regexp.MustCompile(`^\d-\d-\d.`)
 	var stmt *sql.Stmt
-	defer stmt.Close()
 
 	if datePat.MatchString(closingDate) {
 		stmt, err = db.Prepare("insert into cash_collections (tag, sum, status, comment,purpose, close_date) values ($1,$2,$3,$4,$5,$6) RETURNING id")
@@ -249,6 +248,7 @@ func CreateCashCollection(tag string, sum float64, status string, comment string
 		err = stmt.QueryRow(tag, sum, status, comment, purpose).Scan(&id)
 	}
 
+	_ = stmt.Close()
 	return
 
 }
