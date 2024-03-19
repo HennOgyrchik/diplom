@@ -6,8 +6,8 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"project1/cmd/chat"
-	"project1/cmd/service"
+	"project1/internal/chat"
+	"project1/internal/service"
 )
 
 func main() {
@@ -23,7 +23,7 @@ func main() {
 		for {
 			select {
 			case <-done:
-				fmt.Println("exit")
+				log.Println("Exit")
 				_ = file.Close()
 				os.Exit(0)
 			default:
@@ -32,22 +32,13 @@ func main() {
 		}
 	}()
 
-	token, err := getToken("token.txt") // проверить работает ли с несуществующим файлом
+	srv, err := service.NewService()
 	if err != nil {
-		fmt.Println(err)
-		log.Println("main/getToken: ", err)
+		log.Println("main/NewService: ", err)
 		return
 	}
 
-	bot, err := tgbotapi.NewBotAPI(token)
-	if err != nil {
-		fmt.Println(err)
-		log.Println("main/newBotAPI: ", err)
-		return
-	}
-	bot.Debug = false
-
-	srv := service.NewService(bot)
+	bot := srv.GetBot()
 
 	fmt.Printf("Authorized on account %s", bot.Self.UserName)
 	log.Println("Authorized on account ", bot.Self.UserName)
@@ -60,11 +51,6 @@ func main() {
 	for update := range updates {
 		go handlerUpdate(update, srv)
 	}
-}
-
-func getToken(filename string) (string, error) {
-	token, err := os.ReadFile(filename)
-	return string(token[:]), err
 }
 
 func handlerUpdate(update tgbotapi.Update, srv *service.Service) {

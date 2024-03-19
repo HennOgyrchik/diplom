@@ -1,0 +1,9 @@
+{
+  "Token": "6287298437:AAGTUV0bTSCLFe2F1Dr06lh8i_JIH1M7Ih4",
+  "FTP_Address": "192.168.0.116:21",
+  "PSQL_Address": "192.168.0.116:5432",
+  "PSQL_DBName": "postgres",
+  "PSQL_User": "postgres",
+  "PSQL_Password": "111",
+  "PSQL_SSLMode": "disable"
+}

@@ -2,14 +2,27 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
 	_ "github.com/lib/pq"
 	_ "regexp"
+	"strings"
 	"time"
 )
 
-func dbConnection() (*sql.DB, error) {
-	connStr := "user=postgres password=111 dbname=postgres sslmode=disable host=192.168.0.116 port=5432" //как то убрать логин и пароль, заменить ip на имя контейнера
-	db, err := sql.Open("postgres", connStr)
+//type Postgres struct {
+//	Address string
+//	DBName string
+//	User string
+//	Password string
+//	SSLMode string
+//}
+
+type ConnString string
+
+func dbConnection(connStr ConnString) (*sql.DB, error) {
+	//addr:=strings.Split(p.address,":")
+	//connStr := fmt.Sprintf("user=postgres password=111 dbname=postgres sslmode=disable host=%s port=%s",addr[0], addr[1])  //как то убрать логин и пароль, заменить ip на имя контейнера
+	db, err := sql.Open("postgres", string(connStr))
 
 	if err != nil {
 		_ = db.Close()
@@ -18,8 +31,16 @@ func dbConnection() (*sql.DB, error) {
 	return db, err
 }
 
-func IsMember(memberId int64) (bool, error) {
-	db, err := dbConnection()
+func NewDBConnString(socket, dbName, user, password, sslMode string) (ConnString, error) {
+	addr := strings.Split(socket, ":")
+	if len(addr) != 2 {
+		return "", fmt.Errorf("Invalid format address")
+	}
+	return ConnString(fmt.Sprintf("user=%s password=%s dbname=%s sslmode=%s host=%s port=%s", user, password, dbName, sslMode, addr[0], addr[1])), nil
+}
+
+func (connStr ConnString) IsMember(memberId int64) (bool, error) {
+	db, err := dbConnection(connStr)
 	if err != nil {
 		return false, err
 	}
@@ -41,8 +62,8 @@ func IsMember(memberId int64) (bool, error) {
 	return true, nil
 }
 
-func IsAdmin(memberId int64) (bool, error) {
-	db, err := dbConnection()
+func (connStr ConnString) IsAdmin(memberId int64) (bool, error) {
+	db, err := dbConnection(connStr)
 	if err != nil {
 		return false, err
 	}
@@ -59,8 +80,8 @@ func IsAdmin(memberId int64) (bool, error) {
 	return result, err
 }
 
-func DoesTagExist(tag string) (bool, error) {
-	db, err := dbConnection()
+func (connStr ConnString) DoesTagExist(tag string) (bool, error) {
+	db, err := dbConnection(connStr)
 	if err != nil {
 		return false, err
 	}
@@ -84,8 +105,8 @@ func DoesTagExist(tag string) (bool, error) {
 	}
 }
 
-func CreateFund(tag string, balance float64) error {
-	db, err := dbConnection()
+func (connStr ConnString) CreateFund(tag string, balance float64) error {
+	db, err := dbConnection(connStr)
 	if err != nil {
 		return err
 	}
@@ -101,8 +122,8 @@ func CreateFund(tag string, balance float64) error {
 	return err
 }
 
-func GetAdminFund(tag string) (int64, error) {
-	db, err := dbConnection()
+func (connStr ConnString) GetAdminFund(tag string) (int64, error) {
+	db, err := dbConnection(connStr)
 	if err != nil {
 		return -1, err
 	}
@@ -121,8 +142,8 @@ func GetAdminFund(tag string) (int64, error) {
 }
 
 // ShowBalance возвращает баланс фонда
-func ShowBalance(tag string) (float64, error) {
-	db, err := dbConnection()
+func (connStr ConnString) ShowBalance(tag string) (float64, error) {
+	db, err := dbConnection(connStr)
 	if err != nil {
 		return 0, err
 	}
@@ -140,8 +161,8 @@ func ShowBalance(tag string) (float64, error) {
 }
 
 // DeleteFund удаляет фонд
-func DeleteFund(tag string) error {
-	db, err := dbConnection()
+func (connStr ConnString) DeleteFund(tag string) error {
+	db, err := dbConnection(connStr)
 	if err != nil {
 		return err
 	}
@@ -159,8 +180,8 @@ func DeleteFund(tag string) error {
 }
 
 // GetTag возвращает тег фонда, в котором пользователь находится
-func GetTag(memberId int64) (string, error) {
-	db, err := dbConnection()
+func (connStr ConnString) GetTag(memberId int64) (string, error) {
+	db, err := dbConnection(connStr)
 	if err != nil {
 		return "", err
 	}
@@ -185,8 +206,8 @@ type Member struct {
 	Name    string
 }
 
-func AddMember(member Member) error {
-	db, err := dbConnection()
+func (connStr ConnString) AddMember(member Member) error {
+	db, err := dbConnection(connStr)
 	if err != nil {
 		return err
 	}
@@ -203,9 +224,9 @@ func AddMember(member Member) error {
 }
 
 // GetMembers возвращает список пользователей фонда
-func GetMembers(tag string) ([]Member, error) {
+func (connStr ConnString) GetMembers(tag string) ([]Member, error) {
 	var members []Member
-	db, err := dbConnection()
+	db, err := dbConnection(connStr)
 	if err != nil {
 		return members, err
 	}
@@ -234,10 +255,10 @@ func GetMembers(tag string) ([]Member, error) {
 }
 
 // GetInfoAboutMember возвращает полную информацию о пользователе
-func GetInfoAboutMember(memberId int64) (Member, error) {
+func (connStr ConnString) GetInfoAboutMember(memberId int64) (Member, error) {
 	member := Member{ID: memberId}
 
-	db, err := dbConnection()
+	db, err := dbConnection(connStr)
 	if err != nil {
 		return member, err
 	}
@@ -264,9 +285,8 @@ type CashCollection struct {
 	Purpose    string
 }
 
-func CreateCashCollection(cashCollection CashCollection) (int, error) {
-
-	db, err := dbConnection()
+func (connStr ConnString) CreateCashCollection(cashCollection CashCollection) (int, error) {
+	db, err := dbConnection(connStr)
 	if err != nil {
 		return -1, err
 	}
@@ -286,10 +306,10 @@ func CreateCashCollection(cashCollection CashCollection) (int, error) {
 
 }
 
-func InfoAboutCashCollection(idCashCollection int) (CashCollection, error) {
+func (connStr ConnString) InfoAboutCashCollection(idCashCollection int) (CashCollection, error) {
 	cc := CashCollection{ID: idCashCollection}
 
-	db, err := dbConnection()
+	db, err := dbConnection(connStr)
 	if err != nil {
 		return cc, err
 	}
@@ -306,9 +326,8 @@ func InfoAboutCashCollection(idCashCollection int) (CashCollection, error) {
 	return cc, err
 }
 
-func UpdateStatusCashCollection(idCashCollection int) error {
-
-	db, err := dbConnection()
+func (connStr ConnString) UpdateStatusCashCollection(idCashCollection int) error {
+	db, err := dbConnection(connStr)
 	if err != nil {
 		return err
 	}
@@ -325,6 +344,22 @@ func UpdateStatusCashCollection(idCashCollection int) error {
 	return nil
 }
 
+func (connStr ConnString) CreateDebitingFunds(cashCollection CashCollection, memberID int64, receipt string) (ok bool, err error) {
+	db, err := dbConnection(connStr)
+	if err != nil {
+		return
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("select * from  new_deb($1, $2, $3,$4,$5,$6, $7)")
+	if err != nil {
+		return
+	}
+
+	err = stmt.QueryRow(cashCollection.Tag, cashCollection.Sum, cashCollection.Comment, cashCollection.Purpose, receipt, cashCollection.CreateDate.Format(time.DateOnly), memberID).Scan(&ok)
+	return
+}
+
 type Transaction struct {
 	ID               int
 	CashCollectionID int
@@ -336,8 +371,8 @@ type Transaction struct {
 	Date             time.Time
 }
 
-func InfoAboutTransaction(idTransaction int) (Transaction, error) {
-	db, err := dbConnection()
+func (connStr ConnString) InfoAboutTransaction(idTransaction int) (Transaction, error) {
+	db, err := dbConnection(connStr)
 	if err != nil {
 		return Transaction{}, err
 	}
@@ -355,8 +390,8 @@ func InfoAboutTransaction(idTransaction int) (Transaction, error) {
 	return t, err
 }
 
-func InsertInTransactions(transaction Transaction) (int, error) {
-	db, err := dbConnection()
+func (connStr ConnString) InsertInTransactions(transaction Transaction) (int, error) {
+	db, err := dbConnection(connStr)
 	if err != nil {
 		return -1, err
 	}
@@ -372,8 +407,8 @@ func InsertInTransactions(transaction Transaction) (int, error) {
 	return id, nil
 }
 
-func ChangeStatusTransaction(idTransaction int, status string) error {
-	db, err := dbConnection()
+func (connStr ConnString) ChangeStatusTransaction(idTransaction int, status string) error {
+	db, err := dbConnection(connStr)
 	if err != nil {
 		return err
 	}
@@ -417,21 +452,7 @@ func ChangeStatusTransaction(idTransaction int, status string) error {
 //}
 
 //
-//func CreateDebitingFunds(memberId int64, tag string, sum float64, comment string, purpose string, receipt string) (ok bool, err error) {
-//	db, err := dbConnection()
-//	if err != nil {
-//		return
-//	}
-//	defer db.Close()
-//
-//	stmt, err := db.Prepare("select * from  new_deb($1, $2, $3,$4,$5, $6)")
-//	if err != nil {
-//		return
-//	}
-//
-//	err = stmt.QueryRow(tag, sum, comment, purpose, receipt, memberId).Scan(&ok)
-//	return
-//}
+
 //
 //func GetDebtors(idCashCollection int) (members []int64, err error) {
 //	db, err := dbConnection()

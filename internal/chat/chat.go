@@ -5,8 +5,10 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"log"
 	"math/rand"
-	"project1/cmd/service"
-	"project1/db"
+	"net/http"
+	"path"
+	"project1/internal/db"
+	"project1/internal/service"
 	"regexp"
 	"strconv"
 	"strings"
@@ -88,7 +90,7 @@ func (c *Chat) CommandSwitcher(query string) {
 	case cmd == "createCashCollection":
 		c.createCashCollection()
 	case cmd == "createDebitingFunds":
-		//c.createDebitingFunds()
+		c.createDebitingFunds()
 	case paymentPat.MatchString(cmd): // оплата
 		cashCollectionId, err := strconv.Atoi(strings.Split(cmd, " ")[1])
 		if err != nil {
@@ -140,7 +142,7 @@ func (c *Chat) startMenu() {
 }
 
 func (c *Chat) showMenu() {
-	ok, err := db.IsMember(c.chatId)
+	ok, err := c.DB.IsMember(c.chatId)
 	if err != nil {
 		c.writeToLog("showMenu/isMember", err)
 		c.sendAnyError()
@@ -166,7 +168,7 @@ func (c *Chat) showMenu() {
 
 	msg := tgbotapi.NewMessage(c.chatId, "Приветствую! Выберите один из вариантов")
 
-	ok, err = db.IsAdmin(c.chatId)
+	ok, err = c.DB.IsAdmin(c.chatId)
 	if err != nil {
 		c.writeToLog("showMenu/isAdmin", err)
 		c.sendAnyError()
@@ -189,7 +191,7 @@ func (c *Chat) showMenu() {
 
 // confirmationCreationNewFund проверяет состоит ли пользователь в другом фонде, если не состоит, то запрашивает подтверждение операции
 func (c *Chat) confirmationCreateNewFund() {
-	ok, err := db.IsMember(c.chatId)
+	ok, err := c.DB.IsMember(c.chatId)
 	if err != nil {
 		c.writeToLog("confirmationCreateNewFund/isMember", err)
 		c.sendAnyError()
@@ -221,7 +223,7 @@ func (c *Chat) createNewFund() {
 		return
 	}
 
-	tag, err := newTag()
+	tag, err := c.newTag()
 	if err != nil {
 		c.writeToLog("createNewFund/newTag", err)
 		c.sendAnyError()
@@ -233,13 +235,13 @@ func (c *Chat) createNewFund() {
 		return
 	}
 
-	if err = db.CreateFund(tag, sum); err != nil {
+	if err = c.DB.CreateFund(tag, sum); err != nil {
 		c.writeToLog("createNewFund", err)
 		c.sendAnyError()
 		return
 	}
 
-	if err = db.AddMember(db.Member{
+	if err = c.DB.AddMember(db.Member{
 		ID:      c.chatId,
 		Tag:     tag,
 		IsAdmin: true,
@@ -247,14 +249,14 @@ func (c *Chat) createNewFund() {
 		Name:    name,
 	}); err != nil {
 		c.writeToLog("createNewFund/AddMember", err)
-		err = db.DeleteFund(tag)
+		err = c.DB.DeleteFund(tag)
 		c.writeToLog("createNewFund/DeleteFund", err)
 		c.sendAnyError()
 		return
 	}
 
 	if err = c.send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Новый фонд создан успешно! Присоединиться к фонду можно, используя тег: %s \nВнимание! Не показывайте этот тег посторонним людям.", tag))); err != nil {
-		if err = db.DeleteFund(tag); err != nil {
+		if err = c.DB.DeleteFund(tag); err != nil {
 			c.writeToLog("createNewFund/DeleteFund", err)
 		}
 		return
@@ -263,13 +265,13 @@ func (c *Chat) createNewFund() {
 }
 
 func (c *Chat) showBalance() {
-	tag, err := db.GetTag(c.chatId)
+	tag, err := c.DB.GetTag(c.chatId)
 	if err != nil {
 		c.writeToLog("showBalance/getTag", err)
 		c.sendAnyError()
 		return
 	}
-	balance, err := db.ShowBalance(tag)
+	balance, err := c.DB.ShowBalance(tag)
 	if err != nil {
 		c.writeToLog("showBalance", err)
 		c.sendAnyError()
@@ -280,7 +282,7 @@ func (c *Chat) showBalance() {
 }
 
 func (c *Chat) join() {
-	ok, err := db.IsMember(c.chatId)
+	ok, err := c.DB.IsMember(c.chatId)
 	if err != nil {
 		c.writeToLog("join/isMember", err)
 		c.sendAnyError()
@@ -303,7 +305,7 @@ func (c *Chat) join() {
 
 	tag := response.Text
 
-	ok, err = db.DoesTagExist(tag)
+	ok, err = c.DB.DoesTagExist(tag)
 	if err != nil {
 		c.writeToLog("join/doesTagExists", err)
 		c.sendAnyError()
@@ -320,7 +322,7 @@ func (c *Chat) join() {
 		return
 	}
 
-	if err = db.AddMember(db.Member{
+	if err = c.DB.AddMember(db.Member{
 		ID:      c.chatId,
 		Tag:     tag,
 		IsAdmin: false,
@@ -336,14 +338,14 @@ func (c *Chat) join() {
 }
 
 func (c *Chat) getMembers() {
-	tag, err := db.GetTag(c.chatId)
+	tag, err := c.DB.GetTag(c.chatId)
 	if err != nil {
 		c.writeToLog("getMembers/getTag", err)
 		c.sendAnyError()
 		return
 	}
 
-	members, err := db.GetMembers(tag)
+	members, err := c.DB.GetMembers(tag)
 	if err != nil {
 		c.writeToLog("getMembers", err)
 		c.sendAnyError()
@@ -384,14 +386,14 @@ func (c *Chat) createCashCollection() {
 		return
 	}
 
-	tag, err := db.GetTag(c.chatId)
+	tag, err := c.DB.GetTag(c.chatId)
 	if err != nil {
 		c.writeToLog("createCashCollection/GetTag", err)
 		c.sendAnyError()
 		return
 	}
 
-	id, err := db.CreateCashCollection(db.CashCollection{
+	id, err := c.DB.CreateCashCollection(db.CashCollection{
 		Tag:        tag,
 		Sum:        sum,
 		Status:     "открыт",
@@ -411,13 +413,13 @@ func (c *Chat) createCashCollection() {
 }
 
 func (c *Chat) collectionNotification(idCollection int, tagFund string) {
-	members, err := db.GetMembers(tagFund)
+	members, err := c.DB.GetMembers(tagFund)
 	if err != nil {
 		c.writeToLog("collectionNotification/GetMembers", err)
 		c.sendAnyError()
 		return
 	}
-	cc, err := db.InfoAboutCashCollection(idCollection)
+	cc, err := c.DB.InfoAboutCashCollection(idCollection)
 	if err != nil {
 		c.writeToLog("collectionNotification/InfoAboutCashCollection", err)
 		c.sendAnyError()
@@ -438,7 +440,7 @@ func (c *Chat) collectionNotification(idCollection int, tagFund string) {
 }
 
 func (c *Chat) payment(cashCollectionId int) {
-	cc, err := db.InfoAboutCashCollection(cashCollectionId)
+	cc, err := c.DB.InfoAboutCashCollection(cashCollectionId)
 	if err != nil {
 		c.writeToLog("payment/InfoAboutCashCollection", err)
 		c.sendAnyError()
@@ -456,7 +458,7 @@ func (c *Chat) payment(cashCollectionId int) {
 		return
 	}
 
-	idTransaction, err := db.InsertInTransactions(db.Transaction{
+	idTransaction, err := c.DB.InsertInTransactions(db.Transaction{
 		CashCollectionID: cashCollectionId,
 		Sum:              sum,
 		Type:             "пополнение",
@@ -477,20 +479,20 @@ func (c *Chat) payment(cashCollectionId int) {
 
 // paymentNotification отправить запрос на подтверждение оплаты администратору
 func (c *Chat) paymentNotification(idTransaction int, sum float64) { //доделать
-	tag, err := db.GetTag(c.chatId)
+	tag, err := c.DB.GetTag(c.chatId)
 	if err != nil {
 		c.writeToLog("paymentNotification/GetTag", err)
 		c.sendAnyError()
 		return
 	}
-	adminId, err := db.GetAdminFund(tag)
+	adminId, err := c.DB.GetAdminFund(tag)
 	if err != nil {
 		c.writeToLog("paymentNotification/GetAdminFund", err)
 		c.sendAnyError()
 		return
 	}
 
-	member, err := db.GetInfoAboutMember(c.chatId)
+	member, err := c.DB.GetInfoAboutMember(c.chatId)
 	if err != nil {
 		c.writeToLog("paymentNotification/GetInfoAboutMember", err)
 		c.sendAnyError()
@@ -513,7 +515,7 @@ func (c *Chat) paymentNotification(idTransaction int, sum float64) { //доде�
 
 // changeStatusOfTransaction изменение статуса транзакции
 func (c *Chat) changeStatusOfTransaction(idTransaction int, status string) {
-	err := db.ChangeStatusTransaction(idTransaction, status)
+	err := c.DB.ChangeStatusTransaction(idTransaction, status)
 	if err != nil {
 		c.writeToLog("changeStatusOfTransaction", err)
 		c.sendAnyError()
@@ -522,12 +524,12 @@ func (c *Chat) changeStatusOfTransaction(idTransaction int, status string) {
 
 	_ = c.send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Статус оплаты: %s", status)))
 
-	t, err := db.InfoAboutTransaction(idTransaction)
+	t, err := c.DB.InfoAboutTransaction(idTransaction)
 	if err != nil {
 		c.writeToLog("changeStatusOfTransaction/InfoAboutTransaction", err)
 	}
 
-	if err = db.UpdateStatusCashCollection(t.CashCollectionID); err != nil {
+	if err = c.DB.UpdateStatusCashCollection(t.CashCollectionID); err != nil {
 		fmt.Println(err)
 		c.writeToLog("changeStatusOfTransaction/CheckDebtors", err)
 	}
@@ -536,7 +538,7 @@ func (c *Chat) changeStatusOfTransaction(idTransaction int, status string) {
 }
 
 func (c *Chat) paymentChangeStatusNotification(idTransaction int) {
-	t, err := db.InfoAboutTransaction(idTransaction)
+	t, err := c.DB.InfoAboutTransaction(idTransaction)
 	if err != nil {
 		c.writeToLog("paymentChangeStatusNotification", err)
 		c.sendAnyError()
@@ -546,91 +548,95 @@ func (c *Chat) paymentChangeStatusNotification(idTransaction int) {
 	_ = c.send(tgbotapi.NewMessage(t.MemberID, fmt.Sprintf("Статус оплаты изменен на: %s", t.Status)))
 }
 
-//
-//
-//func (r *response) downloadAttachment(fileId string) (fileName string, err error) {
-//	_, err = r.bot.GetFile(tgbotapi.FileConfig{FileID: fileId})
-//	if err != nil {
-//		return
-//	}
-//
-//	pathFile, err := r.bot.GetFileDirectURL(fileId)
-//	if err != nil {
-//		return
-//	}
-//
-//	resp, err := http.Get(pathFile)
-//	defer resp.Body.Close()
-//	if err != nil {
-//		return
-//	}
-//
-//	fileName = strconv.FormatInt(r.chatId, 10) + "_" + path.Base(pathFile)
-//	ok, err := ftp.StoreFile(fileName, resp.Body)
-//	if err != nil {
-//		fmt.Println(err)
-//	}
-//	fmt.Print(ok)
-//
-//	return
-//}
-//
-//func (r *response) createDebitingFunds() {
-//	sum, err := r.getFloatFromUser("Введите сумму списания.")
-//	if err != nil {
-//		return
-//	}
-//
-//	msg := tgbotapi.NewMessage(r.chatId, "Укажите причину списания")
-//	if _, err = r.bot.Send(msg); err != nil {
-//		return
-//	}
-//
-//	answer, err := r.waitingResponse("text")
-//	if err != nil {
-//		return
-//	}
-//	purpose := answer.Text
-//
-//	tag, err := db.GetTag(r.chatId)
-//	if err != nil {
-//		return
-//	}
-//
-//	msg.Text = "Прикрепите чек файлом"
-//	if _, err = r.bot.Send(msg); err != nil {
-//		return
-//	}
-//	////////////////////////////////////////////ожидание чека файлом или картинкой
-//	answer, err = r.waitingResponse("attachment")
-//	if err != nil {
-//		return
-//	}
-//
-//	var file string
-//	if answer.Photo != nil {
-//		file = answer.Photo[len(answer.Photo)-1].FileID
-//
-//	} else {
-//		file = answer.Document.FileID
-//	}
-//	fileName, err := r.downloadAttachment(file)
-//	if err != nil {
-//		return
-//	}
-//
-//	///////////////////////////Создание транзакции////////////////////////////////////////////////
-//	ok, err := db.CreateDebitingFunds(r.chatId, tag, sum, fmt.Sprintf("Инициатор: %s", r.username), purpose, fileName)
-//	if err != nil || !ok {
-//		r.notificationAboutError("Произошла ошибка. Попробуйте еще раз.")
-//		return
-//	}
-//	///////////////////////////////////////////////////////////////////////////
-//	msg.Text = "Списание проведено успешно."
-//	_, _ = r.bot.Send(msg)
-//
-//}
-//
+func (c *Chat) createDebitingFunds() {
+	sum, err := c.getFloatFromUser("Введите сумму списания")
+	if err != nil {
+		c.sendAttemptsExceededError()
+		return
+	}
+
+	if err = c.send(tgbotapi.NewMessage(c.chatId, "Укажите причину списания")); err != nil {
+		return
+	}
+
+	purpose, err := c.getResponse("text")
+	if err != nil {
+		c.sendAttemptsExceededError()
+		return
+	}
+
+	tag, err := c.DB.GetTag(c.chatId)
+	if err != nil {
+		c.writeToLog("createDebitingFunds/GetTag", err)
+		return
+	}
+
+	if err = c.send(tgbotapi.NewMessage(c.chatId, "Прикрепите чек")); err != nil {
+		return
+	}
+
+	attachment, err := c.getResponse("attachment")
+	if err != nil {
+		return
+	}
+
+	var idFile string
+	if attachment.Photo != nil {
+		idFile = attachment.Photo[len(attachment.Photo)-1].FileID
+	} else {
+		idFile = attachment.Document.FileID
+	}
+
+	fileName, err := c.downloadAttachment(idFile)
+	if err != nil {
+		c.writeToLog("createDebitingFunds/downloadAttachment", err)
+		return
+	}
+
+	if ok, err := c.DB.CreateDebitingFunds(db.CashCollection{
+		Tag:        tag,
+		Sum:        sum,
+		Comment:    fmt.Sprintf("Инициатор: %s", c.username),
+		CreateDate: time.Now(),
+		Purpose:    purpose.Text,
+	}, c.chatId, fileName); err != nil || !ok {
+		c.writeToLog("CreateDebitingFunds", err)
+		c.sendAnyError()
+		return
+	}
+
+	// TODO уведомить всех
+	_ = c.send(tgbotapi.NewMessage(c.chatId, "Списание проведено успешно"))
+}
+
+func (c *Chat) downloadAttachment(fileId string) (fileName string, err error) {
+	bot := c.Service.GetBot()
+
+	_, err = bot.GetFile(tgbotapi.FileConfig{FileID: fileId})
+	if err != nil {
+		return
+	}
+
+	pathFile, err := bot.GetFileDirectURL(fileId)
+	if err != nil {
+		return
+	}
+
+	resp, err := http.Get(pathFile)
+	defer resp.Body.Close()
+	if err != nil {
+		return
+	}
+
+	fileName = strconv.FormatInt(c.chatId, 10) + "_" + path.Base(pathFile)
+
+	err = c.FTP.StoreFile(fileName, resp.Body)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	return
+}
 
 // getFloatFromUser получить вещественное число от пользователя. Возвращает AttemptsExceeded
 func (c *Chat) getFloatFromUser(message string) (float64, error) {
@@ -721,7 +727,7 @@ func (c *Chat) sendAttemptsExceededError() {
 }
 
 // newTag формирует новый тег. Выполняет проверку на существование. Если Тег уже существует формирует новый рекурсивно
-func newTag() (string, error) {
+func (c *Chat) newTag() (string, error) {
 	symbols := []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 	result := make([]byte, rand.Intn(5)+5)
 	for i := range result {
@@ -730,11 +736,11 @@ func newTag() (string, error) {
 
 	tag := string(result)
 
-	ok, err := db.DoesTagExist(tag)
+	ok, err := c.DB.DoesTagExist(tag)
 	if err != nil || !ok {
 		return tag, err
 	} else {
-		return newTag()
+		return c.newTag()
 	}
 }
 

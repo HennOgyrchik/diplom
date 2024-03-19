@@ -6,8 +6,10 @@ import (
 	"io/ioutil"
 )
 
-func FTPServerConnection() (client *ftp.ServerConn, err error) {
-	client, err = ftp.Dial("192.168.0.103:21")
+type FTP string
+
+func serverConnection(address FTP) (client *ftp.ServerConn, err error) {
+	client, err = ftp.Dial(string(address))
 	if err != nil {
 		return
 	}
@@ -19,26 +21,23 @@ func FTPServerConnection() (client *ftp.ServerConn, err error) {
 	return
 }
 
-func StoreFile(fileName string, r io.Reader) (ok bool, err error) {
-	ok = false
-
-	client, err := FTPServerConnection()
+func (ftp FTP) StoreFile(fileName string, r io.Reader) error {
+	client, err := serverConnection(ftp)
 	if err != nil {
-		return
+		return err
 	}
 	defer client.Quit()
 
-	//data := bytes.NewBufferString("Hello World")
 	err = client.Stor(fileName, r)
 	if err != nil {
-		panic(err)
+		return err
 	}
-	ok = true
-	return
+
+	return nil
 }
 
-func ReadFile() {
-	client, err := FTPServerConnection()
+func (ftp FTP) ReadFile() {
+	client, err := serverConnection(ftp)
 	if err != nil {
 		return
 	}
