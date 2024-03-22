@@ -71,7 +71,9 @@ func (s *Service) WaitingResponse(id int64) {
 
 func (s *Service) StopWaiting(id int64) {
 	s.wg.Lock()
-	close(s.waitingList[id])
-	delete(s.waitingList, id)
+	if _, ok := s.waitingList[id]; ok {
+		close(s.waitingList[id])
+		delete(s.waitingList, id)
+	}
 	s.wg.Unlock()
 }

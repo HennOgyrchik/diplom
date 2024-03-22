@@ -68,11 +68,19 @@ func handlerUpdate(update tgbotapi.Update, srv *service.Service) {
 		return
 	}
 
-	chat := chat.NewChat(update.FromChat().UserName, message.Chat.ID, srv, message)
+	ch := chat.NewChat(update.FromChat().UserName, message.Chat.ID, srv, message)
 
-	if userChan, ok := srv.GetUserChan(chat.GetChatId()); ok { //есть ли функции ожидающие ответа от пользователя?
-		userChan <- chat.GetMessage() //если есть, отправь полученное сообщение в канал
-	} else { // если нет функций ожидающих ответа, запусти новую рутину
-		go chat.CommandSwitcher(command)
+	if userChan, ok := srv.GetUserChan(ch.GetChatId()); ok { //есть ли функции ожидающие ответа от пользователя?
+		if !ch.CommandSwitcher(command) { //функция ждет ответ, проверь ответ это команда? Если это так, то она запустится
+			userChan <- ch.GetMessage() //ответ не команда, отправь полученное сообщение в канал
+			return
+		}
+		userChan <- nil
+		return
 	}
+
+	if !ch.CommandSwitcher(command) {
+		_ = ch.Send(tgbotapi.NewMessage(ch.GetChatId(), "Я не знаю такую команду"))
+	}
+
 }

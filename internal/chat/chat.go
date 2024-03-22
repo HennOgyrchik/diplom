@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"errors"
 	"fmt"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"log"
@@ -26,7 +27,7 @@ func (c *Chat) test() error { // 3 попытки на отправку
 	var err error
 
 	for i := 0; i < 3; i++ {
-		if err = c.send(tgbotapi.NewMessage(c.chatId, "тестовая кнопка")); err == nil {
+		if err = c.Send(tgbotapi.NewMessage(c.chatId, "тестовая кнопка")); err == nil {
 			return err
 		}
 	}
@@ -50,8 +51,8 @@ func (c *Chat) GetMessage() *tgbotapi.Message {
 	return c.msg
 }
 
-// send 3 попытки на отправку, иначе удалить из списка ожидания и вернуть ошибку. Возвращает AttemptsExceeded
-func (c *Chat) send(message tgbotapi.MessageConfig) error {
+// Send 3 попытки на отправку, иначе удалить из списка ожидания и вернуть ошибку. Возвращает AttemptsExceeded
+func (c *Chat) Send(message tgbotapi.MessageConfig) error {
 
 	for i := 0; i < 3; i++ {
 		if _, err := c.Service.GetBot().Send(message); err == nil {
@@ -64,7 +65,7 @@ func (c *Chat) send(message tgbotapi.MessageConfig) error {
 	return AttemptsExceeded
 }
 
-func (c *Chat) CommandSwitcher(query string) {
+func (c *Chat) CommandSwitcher(query string) bool {
 	var paymentPat = regexp.MustCompile(`^payment\s\d*.`)
 	var rejectionPat = regexp.MustCompile(`^reject\s\d*.`)
 	var waitingPat = regexp.MustCompile(`^wait\s\d*.`)
@@ -72,58 +73,69 @@ func (c *Chat) CommandSwitcher(query string) {
 
 	switch cmd := query; {
 	case cmd == "start":
-		c.startMenu()
+		go c.startMenu()
 	case cmd == "menu":
-		c.showMenu()
+		go c.showMenu()
 	case cmd == "confirmationCreateNewFund":
-		c.confirmationCreateNewFund()
+		go c.confirmationCreateNewFund()
 	case cmd == "join":
-		c.join()
+		go c.join()
 	case cmd == "createNewFund":
-		c.createNewFund()
+		go c.createNewFund()
 	case cmd == "showBalance":
-		c.showBalance()
+		go c.showBalance()
 	case cmd == "test":
-		_ = c.test()
+		go c.test()
 	case cmd == "getMembers":
-		c.getMembers()
+		go c.getMembers()
 	case cmd == "createCashCollection":
-		c.createCashCollection()
+		go c.createCashCollection()
 	case cmd == "createDebitingFunds":
-		c.createDebitingFunds()
+		go c.createDebitingFunds()
 	case paymentPat.MatchString(cmd): // оплата
-		cashCollectionId, err := strconv.Atoi(strings.Split(cmd, " ")[1])
-		if err != nil {
-			c.sendAnyError()
-			return
-		}
-		c.payment(cashCollectionId)
+		go func() {
+			cashCollectionId, err := strconv.Atoi(strings.Split(cmd, " ")[1])
+			if err != nil {
+				c.sendAnyError()
+				return
+			}
+			c.payment(cashCollectionId)
+		}()
+
 	case acceptPat.MatchString(cmd): // подтверждение оплаты
-		idTransaction, err := strconv.Atoi(strings.Split(cmd, " ")[1])
-		if err != nil {
-			c.writeToLog("CommandSwitcher/acceptPat", err)
-			c.sendAnyError()
-			return
-		}
-		c.changeStatusOfTransaction(idTransaction, "подтвержден")
+		go func() {
+			idTransaction, err := strconv.Atoi(strings.Split(cmd, " ")[1])
+			if err != nil {
+				c.writeToLog("CommandSwitcher/acceptPat", err)
+				c.sendAnyError()
+				return
+			}
+			c.changeStatusOfTransaction(idTransaction, "подтвержден")
+		}()
+
 	case waitingPat.MatchString(cmd): // ожидание оплаты
-		idTransaction, err := strconv.Atoi(strings.Split(cmd, " ")[1])
-		if err != nil {
-			c.writeToLog("CommandSwitcher/waitingPat", err)
-			return
-		}
-		c.changeStatusOfTransaction(idTransaction, "ожидание")
+		go func() {
+			idTransaction, err := strconv.Atoi(strings.Split(cmd, " ")[1])
+			if err != nil {
+				c.writeToLog("CommandSwitcher/waitingPat", err)
+				return
+			}
+			c.changeStatusOfTransaction(idTransaction, "ожидание")
+		}()
 	case rejectionPat.MatchString(cmd): // отказ оплаты
-		idTransaction, err := strconv.Atoi(strings.Split(cmd, " ")[1])
-		if err != nil {
-			c.writeToLog("CommandSwitcher/rejectionPat", err)
-			return
-		}
-		c.changeStatusOfTransaction(idTransaction, "отказ")
+		go func() {
+			idTransaction, err := strconv.Atoi(strings.Split(cmd, " ")[1])
+			if err != nil {
+				c.writeToLog("CommandSwitcher/rejectionPat", err)
+				return
+			}
+			c.changeStatusOfTransaction(idTransaction, "отказ")
+		}()
 	default:
-		_ = c.send(tgbotapi.NewMessage(c.chatId, "Я не знаю такую команду"))
+		return false
 	}
 
+	return true
 }
 
 func (c *Chat) startMenu() {
@@ -138,7 +150,7 @@ func (c *Chat) startMenu() {
 	msg := tgbotapi.NewMessage(c.chatId, "Приветствую! Выберите один из вариантов")
 	msg.ReplyMarkup = &startKeyboard
 
-	_ = c.send(msg)
+	_ = c.Send(msg)
 }
 
 func (c *Chat) showMenu() {
@@ -149,7 +161,7 @@ func (c *Chat) showMenu() {
 		return
 	}
 	if !ok {
-		if err = c.send(tgbotapi.NewMessage(c.chatId, "Вы не являетесь участником фонда. Создайте новый фонд или присоединитесь к существующему.")); err != nil {
+		if err = c.Send(tgbotapi.NewMessage(c.chatId, "Вы не являетесь участником фонда. Создайте новый фонд или присоединитесь к существующему.")); err != nil {
 			return
 		}
 		c.startMenu()
@@ -186,7 +198,7 @@ func (c *Chat) showMenu() {
 	}
 
 	msg.ReplyMarkup = &menuKeyboard
-	_ = c.send(msg)
+	_ = c.Send(msg)
 }
 
 // confirmationCreationNewFund проверяет состоит ли пользователь в другом фонде, если не состоит, то запрашивает подтверждение операции
@@ -198,7 +210,7 @@ func (c *Chat) confirmationCreateNewFund() {
 		return
 	}
 	if ok {
-		_ = c.send(tgbotapi.NewMessage(c.chatId, "Вы уже являетесь участником фонда"))
+		_ = c.Send(tgbotapi.NewMessage(c.chatId, "Вы уже являетесь участником фонда"))
 		return
 	}
 
@@ -212,14 +224,16 @@ func (c *Chat) confirmationCreateNewFund() {
 	)
 	msg.ReplyMarkup = &numericKeyboard
 
-	_ = c.send(msg)
+	_ = c.Send(msg)
 }
 
 // creatingNewFund создает новый фонд
 func (c *Chat) createNewFund() {
 	sum, err := c.getFloatFromUser("Введите начальную сумму фонда")
 	if err != nil {
-		c.sendAttemptsExceededError()
+		if !errors.Is(err, Close) {
+			c.sendAttemptsExceededError()
+		}
 		return
 	}
 
@@ -231,7 +245,9 @@ func (c *Chat) createNewFund() {
 
 	name, err := c.getName()
 	if err != nil {
-		c.sendAttemptsExceededError()
+		if !errors.Is(err, Close) {
+			c.sendAttemptsExceededError()
+		}
 		return
 	}
 
@@ -255,7 +271,7 @@ func (c *Chat) createNewFund() {
 		return
 	}
 
-	if err = c.send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Новый фонд создан успешно! Присоединиться к фонду можно, используя тег: %s \nВнимание! Не показывайте этот тег посторонним людям.", tag))); err != nil {
+	if err = c.Send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Новый фонд создан успешно! Присоединиться к фонду можно, используя тег: %s \nВнимание! Не показывайте этот тег посторонним людям.", tag))); err != nil {
 		if err = c.DB.DeleteFund(tag); err != nil {
 			c.writeToLog("createNewFund/DeleteFund", err)
 		}
@@ -278,7 +294,7 @@ func (c *Chat) showBalance() {
 		return
 	}
 
-	_ = c.send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Текущий баланс: %.2f руб", balance)))
+	_ = c.Send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Текущий баланс: %.2f руб", balance)))
 }
 
 func (c *Chat) join() {
@@ -289,17 +305,19 @@ func (c *Chat) join() {
 		return
 	}
 	if ok {
-		_ = c.send(tgbotapi.NewMessage(c.chatId, "Вы уже являетесь участником фонда"))
+		_ = c.Send(tgbotapi.NewMessage(c.chatId, "Вы уже являетесь участником фонда"))
 		return
 	}
 
-	if err = c.send(tgbotapi.NewMessage(c.chatId, "Введите тег фонда. Если у вас нет тега, запросите его у администратора фонда")); err != nil {
+	if err = c.Send(tgbotapi.NewMessage(c.chatId, "Введите тег фонда. Если у вас нет тега, запросите его у администратора фонда")); err != nil {
 		return
 	}
 
 	response, err := c.getResponse("text")
 	if err != nil {
-		c.sendAttemptsExceededError()
+		if !errors.Is(err, Close) {
+			c.sendAttemptsExceededError()
+		}
 		return
 	}
 
@@ -312,13 +330,15 @@ func (c *Chat) join() {
 		return
 	}
 	if !ok {
-		_ = c.send(tgbotapi.NewMessage(c.chatId, "Фонд с таким тегом не найден"))
+		_ = c.Send(tgbotapi.NewMessage(c.chatId, "Фонд с таким тегом не найден"))
 		return
 	}
 
 	name, err := c.getName()
 	if err != nil {
-		c.sendAttemptsExceededError()
+		if !errors.Is(err, Close) {
+			c.sendAttemptsExceededError()
+		}
 		return
 	}
 
@@ -334,7 +354,7 @@ func (c *Chat) join() {
 		return
 	}
 
-	_ = c.send(tgbotapi.NewMessage(c.chatId, "Вы успешно присоединились к фонду"))
+	_ = c.Send(tgbotapi.NewMessage(c.chatId, "Вы успешно присоединились к фонду"))
 }
 
 func (c *Chat) getMembers() {
@@ -365,24 +385,29 @@ func (c *Chat) getMembers() {
 
 	}
 
-	_ = c.send(tgbotapi.NewMessage(c.chatId, strBuilder.String()))
+	_ = c.Send(tgbotapi.NewMessage(c.chatId, strBuilder.String()))
 
 }
 
 func (c *Chat) createCashCollection() {
-	sum, err := c.getFloatFromUser("Введите сумму сбора с одного участника.")
+	sum, err := c.getFloatFromUser("Введите сумму сбора с одного участника")
+	fmt.Println(1, err)
 	if err != nil {
-		c.sendAttemptsExceededError()
+		if !errors.Is(err, Close) {
+			c.sendAttemptsExceededError()
+		}
 		return
 	}
 
-	if err = c.send(tgbotapi.NewMessage(c.chatId, "Укажите назначение сбора")); err != nil {
+	if err = c.Send(tgbotapi.NewMessage(c.chatId, "Укажите назначение сбора")); err != nil {
 		return
 	}
 
 	answer, err := c.getResponse("text")
 	if err != nil {
-		c.sendAttemptsExceededError()
+		if !errors.Is(err, Close) {
+			c.sendAttemptsExceededError()
+		}
 		return
 	}
 
@@ -407,7 +432,7 @@ func (c *Chat) createCashCollection() {
 		return
 	}
 
-	_ = c.send(tgbotapi.NewMessage(c.chatId, "Сбор создан. Сообщение о сборе будет отправлено всем участникам"))
+	_ = c.Send(tgbotapi.NewMessage(c.chatId, "Сбор создан. Сообщение о сборе будет отправлено всем участникам"))
 
 	c.collectionNotification(id, tag)
 }
@@ -435,7 +460,7 @@ func (c *Chat) collectionNotification(idCollection int, tagFund string) {
 	for _, member := range members {
 		msg := tgbotapi.NewMessage(member.ID, fmt.Sprintf("Иницирован новый сбор.\nСумма к оплате: %.2f\nНазначение: %s", cc.Sum, cc.Purpose))
 		msg.ReplyMarkup = &paymentKeyboard
-		_ = c.send(msg)
+		_ = c.Send(msg)
 	}
 }
 
@@ -449,12 +474,14 @@ func (c *Chat) payment(cashCollectionId int) {
 
 	sum, err := c.getFloatFromUser("Введите сумму пополнения")
 	if err != nil {
-		c.sendAttemptsExceededError()
+		if !errors.Is(err, Close) {
+			c.sendAttemptsExceededError()
+		}
 		return
 	}
 
 	if sum < cc.Sum {
-		_ = c.send(tgbotapi.NewMessage(c.chatId, "Вы не можете оплатить сумму меньше необходимой."))
+		_ = c.Send(tgbotapi.NewMessage(c.chatId, "Вы не можете оплатить сумму меньше необходимой."))
 		return
 	}
 
@@ -473,7 +500,7 @@ func (c *Chat) payment(cashCollectionId int) {
 		return
 	}
 
-	_ = c.send(tgbotapi.NewMessage(c.chatId, "Ваша оплата добавлена в очередь на подтверждение"))
+	_ = c.Send(tgbotapi.NewMessage(c.chatId, "Ваша оплата добавлена в очередь на подтверждение"))
 	c.paymentNotification(idTransaction, sum)
 }
 
@@ -509,7 +536,7 @@ func (c *Chat) paymentNotification(idTransaction int, sum float64) { //доде�
 
 	msg := tgbotapi.NewMessage(adminId, fmt.Sprintf("Подтвердите зачисление средств на счет фонда.\nСумма: %.2f\nОтправитель: %s", sum, member.Name))
 	msg.ReplyMarkup = &okKeyboard
-	_ = c.send(msg)
+	_ = c.Send(msg)
 
 }
 
@@ -522,7 +549,7 @@ func (c *Chat) changeStatusOfTransaction(idTransaction int, status string) {
 		return
 	}
 
-	_ = c.send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Статус оплаты: %s", status)))
+	_ = c.Send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Статус оплаты: %s", status)))
 
 	t, err := c.DB.InfoAboutTransaction(idTransaction)
 	if err != nil {
@@ -545,23 +572,27 @@ func (c *Chat) paymentChangeStatusNotification(idTransaction int) {
 		return
 	}
 
-	_ = c.send(tgbotapi.NewMessage(t.MemberID, fmt.Sprintf("Статус оплаты изменен на: %s", t.Status)))
+	_ = c.Send(tgbotapi.NewMessage(t.MemberID, fmt.Sprintf("Статус оплаты изменен на: %s", t.Status)))
 }
 
 func (c *Chat) createDebitingFunds() {
 	sum, err := c.getFloatFromUser("Введите сумму списания")
 	if err != nil {
-		c.sendAttemptsExceededError()
+		if !errors.Is(err, Close) {
+			c.sendAttemptsExceededError()
+		}
 		return
 	}
 
-	if err = c.send(tgbotapi.NewMessage(c.chatId, "Укажите причину списания")); err != nil {
+	if err = c.Send(tgbotapi.NewMessage(c.chatId, "Укажите причину списания")); err != nil {
 		return
 	}
 
 	purpose, err := c.getResponse("text")
 	if err != nil {
-		c.sendAttemptsExceededError()
+		if !errors.Is(err, Close) {
+			c.sendAttemptsExceededError()
+		}
 		return
 	}
 
@@ -571,12 +602,15 @@ func (c *Chat) createDebitingFunds() {
 		return
 	}
 
-	if err = c.send(tgbotapi.NewMessage(c.chatId, "Прикрепите чек")); err != nil {
+	if err = c.Send(tgbotapi.NewMessage(c.chatId, "Прикрепите чек")); err != nil {
 		return
 	}
 
 	attachment, err := c.getResponse("attachment")
 	if err != nil {
+		if !errors.Is(err, Close) {
+			c.sendAttemptsExceededError()
+		}
 		return
 	}
 
@@ -606,7 +640,7 @@ func (c *Chat) createDebitingFunds() {
 	}
 
 	// TODO уведомить всех
-	_ = c.send(tgbotapi.NewMessage(c.chatId, "Списание проведено успешно"))
+	_ = c.Send(tgbotapi.NewMessage(c.chatId, "Списание проведено успешно"))
 }
 
 func (c *Chat) downloadAttachment(fileId string) (fileName string, err error) {
@@ -641,12 +675,13 @@ func (c *Chat) downloadAttachment(fileId string) (fileName string, err error) {
 // getFloatFromUser получить вещественное число от пользователя. Возвращает AttemptsExceeded
 func (c *Chat) getFloatFromUser(message string) (float64, error) {
 	var sum float64
-	if err := c.send(tgbotapi.NewMessage(c.chatId, message)); err != nil {
+	if err := c.Send(tgbotapi.NewMessage(c.chatId, message)); err != nil {
 		return sum, err
 	}
 
 	for i := 0; i < 3; i++ {
 		answer, err := c.getResponse("text")
+
 		if err != nil {
 			return sum, err
 		}
@@ -657,7 +692,7 @@ func (c *Chat) getFloatFromUser(message string) (float64, error) {
 			if i == 2 {
 				msg.Text = ""
 			}
-			if err = c.send(msg); err != nil {
+			if err = c.Send(msg); err != nil {
 				return sum, err
 			}
 			continue
@@ -669,7 +704,7 @@ func (c *Chat) getFloatFromUser(message string) (float64, error) {
 
 // getName получить имя пользователя. Возвращает AttemptsExceeded
 func (c *Chat) getName() (string, error) {
-	err := c.send(tgbotapi.NewMessage(c.chatId, "Представьтесь, пожалуйста. Введите ФИО"))
+	err := c.Send(tgbotapi.NewMessage(c.chatId, "Представьтесь, пожалуйста. Введите ФИО"))
 	if err != nil {
 		return "", err
 	}
@@ -692,7 +727,9 @@ func (c *Chat) getResponse(typeOfResponse string) (*tgbotapi.Message, error) {
 	for i := 0; i < 3; i++ {
 		userChan, _ := c.GetUserChan(c.chatId)
 
-		answer = <-userChan
+		if answer = <-userChan; answer == nil {
+			return answer, Close
+		}
 
 		if answer.Photo != nil || answer.Document != nil {
 			typeOfMessage = "attachment"
@@ -702,7 +739,7 @@ func (c *Chat) getResponse(typeOfResponse string) (*tgbotapi.Message, error) {
 
 		if typeOfResponse != typeOfMessage {
 			if i < 2 {
-				if err := c.send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Вы ввели что-то не то. Количество доступных попыток: %d", 2-i))); err != nil {
+				if err := c.Send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Вы ввели что-то не то. Количество доступных попыток: %d", 2-i))); err != nil {
 					return nil, err
 				}
 			}
@@ -710,18 +747,17 @@ func (c *Chat) getResponse(typeOfResponse string) (*tgbotapi.Message, error) {
 		}
 		return answer, nil
 	}
-
 	return answer, AttemptsExceeded
 }
 
 func (c *Chat) sendAnyError() {
-	if err := c.send(tgbotapi.NewMessage(c.chatId, "Произошла ошибка. Повторите попытку позже")); err != nil {
+	if err := c.Send(tgbotapi.NewMessage(c.chatId, "Произошла ошибка. Повторите попытку позже")); err != nil {
 		c.writeToLog("sendError", err)
 	}
 }
 
 func (c *Chat) sendAttemptsExceededError() {
-	if err := c.send(tgbotapi.NewMessage(c.chatId, "Превышено число попыток ввода")); err != nil {
+	if err := c.Send(tgbotapi.NewMessage(c.chatId, "Превышено число попыток ввода")); err != nil {
 		c.writeToLog("sendAttemptsExceededError", err)
 	}
 }
