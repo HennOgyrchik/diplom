@@ -391,7 +391,6 @@ func (c *Chat) getMembers() {
 
 func (c *Chat) createCashCollection() {
 	sum, err := c.getFloatFromUser("Введите сумму сбора с одного участника")
-	fmt.Println(1, err)
 	if err != nil {
 		if !errors.Is(err, Close) {
 			c.sendAttemptsExceededError()
@@ -557,7 +556,6 @@ func (c *Chat) changeStatusOfTransaction(idTransaction int, status string) {
 	}
 
 	if err = c.DB.UpdateStatusCashCollection(t.CashCollectionID); err != nil {
-		fmt.Println(err)
 		c.writeToLog("changeStatusOfTransaction/CheckDebtors", err)
 	}
 
@@ -666,7 +664,7 @@ func (c *Chat) downloadAttachment(fileId string) (fileName string, err error) {
 
 	err = c.FTP.StoreFile(fileName, resp.Body)
 	if err != nil {
-		fmt.Println(err)
+		// TODO обработать ошибки
 	}
 
 	return
