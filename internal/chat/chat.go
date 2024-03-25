@@ -16,6 +16,11 @@ import (
 	"time"
 )
 
+const (
+	alphabet   = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	timeLayout = "02-01-2006_15:04:05"
+)
+
 type Chat struct {
 	username string
 	chatId   int64
@@ -35,6 +40,7 @@ func (c *Chat) test() error { // 3 попытки на отправку
 }
 
 func NewChat(username string, chatId int64, service *service.Service, message *tgbotapi.Message) *Chat {
+
 	return &Chat{
 		username: username,
 		chatId:   chatId,
@@ -66,70 +72,71 @@ func (c *Chat) Send(message tgbotapi.MessageConfig) error {
 }
 
 func (c *Chat) CommandSwitcher(query string) bool {
-	var paymentPat = regexp.MustCompile(`^payment\s\d*.`)
-	var rejectionPat = regexp.MustCompile(`^reject\s\d*.`)
-	var waitingPat = regexp.MustCompile(`^wait\s\d*.`)
-	var acceptPat = regexp.MustCompile(`^accept\s\d*.`)
+	var paymentPat = regexp.MustCompile(`^payment\d*.`)
+	var rejectionPat = regexp.MustCompile(`^reject\d*.`)
+	var expectationPat = regexp.MustCompile(`^wait\d*.`)
+	var acceptPat = regexp.MustCompile(`^accept\d*.`)
 
 	switch cmd := query; {
-	case cmd == "start":
+	case cmd == c.Commands.Start:
 		go c.startMenu()
-	case cmd == "menu":
+	case cmd == c.Commands.Menu:
 		go c.showMenu()
-	case cmd == "confirmationCreateNewFund":
+	case cmd == c.Commands.ConfirmationCreateNewFund:
 		go c.confirmationCreateNewFund()
-	case cmd == "join":
+	case cmd == c.Commands.Join:
 		go c.join()
-	case cmd == "createNewFund":
+	case cmd == c.Commands.CreateNewFund:
 		go c.createNewFund()
-	case cmd == "showBalance":
+	case cmd == c.Commands.ShowBalance:
 		go c.showBalance()
 	case cmd == "test":
 		go c.test()
-	case cmd == "getMembers":
+	case cmd == c.Commands.GetMembers:
 		go c.getMembers()
-	case cmd == "createCashCollection":
+	case cmd == c.Commands.CreateCashCollection:
 		go c.createCashCollection()
-	case cmd == "createDebitingFunds":
+	case cmd == c.Commands.CreateDebitingFunds:
 		go c.createDebitingFunds()
+	case cmd == c.Commands.ShowListDebtors:
+		go c.showListDebtors()
 	case paymentPat.MatchString(cmd): // оплата
 		go func() {
-			cashCollectionId, err := strconv.Atoi(strings.Split(cmd, " ")[1])
+			cashCollectionId, err := strconv.Atoi(strings.ReplaceAll(cmd, c.Commands.Payment, ""))
 			if err != nil {
+				c.writeToLog("CommandSwitcher/paymentPat", err)
 				c.sendAnyError()
 				return
 			}
 			c.payment(cashCollectionId)
 		}()
-
 	case acceptPat.MatchString(cmd): // подтверждение оплаты
 		go func() {
-			idTransaction, err := strconv.Atoi(strings.Split(cmd, " ")[1])
+			idTransaction, err := strconv.Atoi(strings.ReplaceAll(cmd, c.Commands.PaymentAccept, ""))
 			if err != nil {
 				c.writeToLog("CommandSwitcher/acceptPat", err)
 				c.sendAnyError()
 				return
 			}
-			c.changeStatusOfTransaction(idTransaction, "подтвержден")
+			c.changeStatusOfTransaction(idTransaction, db.StatusPaymentConfirmation)
 		}()
-
-	case waitingPat.MatchString(cmd): // ожидание оплаты
+	case expectationPat.MatchString(cmd): // ожидание оплаты
 		go func() {
-			idTransaction, err := strconv.Atoi(strings.Split(cmd, " ")[1])
+			idTransaction, err := strconv.Atoi(strings.ReplaceAll(cmd, c.Commands.PaymentWait, ""))
 			if err != nil {
-				c.writeToLog("CommandSwitcher/waitingPat", err)
+				c.writeToLog("CommandSwitcher/expectationPat", err)
 				return
 			}
-			c.changeStatusOfTransaction(idTransaction, "ожидание")
+			c.changeStatusOfTransaction(idTransaction, db.StatusPaymentExpectation)
 		}()
 	case rejectionPat.MatchString(cmd): // отказ оплаты
 		go func() {
-			idTransaction, err := strconv.Atoi(strings.Split(cmd, " ")[1])
+			idTransaction, err := strconv.Atoi(strings.ReplaceAll(cmd, c.Commands.PaymentReject, ""))
 			if err != nil {
 				c.writeToLog("CommandSwitcher/rejectionPat", err)
 				return
 			}
-			c.changeStatusOfTransaction(idTransaction, "отказ")
+			c.changeStatusOfTransaction(idTransaction, db.StatusPaymentRejection)
 		}()
 	default:
 		return false
@@ -141,9 +148,8 @@ func (c *Chat) CommandSwitcher(query string) bool {
 func (c *Chat) startMenu() {
 	var startKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Создать фонд", "confirmationCreateNewFund"),
-			tgbotapi.NewInlineKeyboardButtonData("Присоединиться", "join"),
-			tgbotapi.NewInlineKeyboardButtonData("Тест", "test"),
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.CreateFound.Label, c.Buttons.CreateFound.Command),
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.Join.Label, c.Buttons.Join.Command),
 		),
 	)
 
@@ -161,7 +167,7 @@ func (c *Chat) showMenu() {
 		return
 	}
 	if !ok {
-		if err = c.Send(tgbotapi.NewMessage(c.chatId, "Вы не являетесь участником фонда. Создайте новый фонд или присоединитесь к существующему.")); err != nil {
+		if err = c.Send(tgbotapi.NewMessage(c.chatId, "Вы не являетесь участником фонда. Создайте новый фонд или присоединитесь к существующему")); err != nil {
 			return
 		}
 		c.startMenu()
@@ -170,11 +176,11 @@ func (c *Chat) showMenu() {
 
 	var menuKeyboard = tgbotapi.NewInlineKeyboardMarkup( //меню для обычного пользователя
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Баланс", "showBalance"),
-			tgbotapi.NewInlineKeyboardButtonData("Оплатить", "1"), // реализовать
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.ShowBalance.Label, c.Buttons.ShowBalance.Command),
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.AwaitingPayment.Label, c.Buttons.AwaitingPayment.Command),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Покинуть фонд", "3"), // реализовать и передвинуть
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.Leave.Label, c.Buttons.Leave.Command), // реализовать и передвинуть
 		),
 	)
 
@@ -190,11 +196,11 @@ func (c *Chat) showMenu() {
 	if ok { // если админ, то дополнить меню
 		menuKeyboard.InlineKeyboard = append(menuKeyboard.InlineKeyboard,
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("Новый сбор", "createCashCollection"),
-				tgbotapi.NewInlineKeyboardButtonData("Новое списание", "createDebitingFunds")),
+				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.CreateCashCollection.Label, c.Buttons.CreateCashCollection.Command),
+				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.CreateDebitingFunds.Label, c.Buttons.CreateDebitingFunds.Command)),
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("Участники", "getMembers"),
-				tgbotapi.NewInlineKeyboardButtonData("Статистика", "2"))) // реализовать
+				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.Members.Label, c.Buttons.Members.Command),
+				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.Statistics.Label, c.Buttons.Statistics.Command)))
 	}
 
 	msg.ReplyMarkup = &menuKeyboard
@@ -218,8 +224,8 @@ func (c *Chat) confirmationCreateNewFund() {
 
 	var numericKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Да", "createNewFund"),
-			tgbotapi.NewInlineKeyboardButtonData("Нет", "start"),
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.ConfirmationCreateFoundYes.Label, c.Buttons.ConfirmationCreateFoundYes.Command),
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.ConfirmationCreateFoundNo.Label, c.Buttons.ConfirmationCreateFoundNo.Command),
 		),
 	)
 	msg.ReplyMarkup = &numericKeyboard
@@ -420,7 +426,7 @@ func (c *Chat) createCashCollection() {
 	id, err := c.DB.CreateCashCollection(db.CashCollection{
 		Tag:        tag,
 		Sum:        sum,
-		Status:     "открыт",
+		Status:     db.StatusCashCollectionOpen,
 		Comment:    fmt.Sprintf("Инициатор: %s", c.username),
 		Purpose:    answer.Text,
 		CreateDate: time.Now(),
@@ -452,7 +458,7 @@ func (c *Chat) collectionNotification(idCollection int, tagFund string) {
 
 	var paymentKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Оплатить", fmt.Sprintf("payment %d", idCollection)),
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.Payment.Label, c.Buttons.Payment.Command+strconv.Itoa(idCollection)),
 		),
 	)
 
@@ -527,9 +533,9 @@ func (c *Chat) paymentNotification(idTransaction int, sum float64) { //доде�
 
 	var okKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("Подтвердить", fmt.Sprintf("accept %d", idTransaction)),
-			tgbotapi.NewInlineKeyboardButtonData("Отказ", fmt.Sprintf("reject %d", idTransaction)),
-			tgbotapi.NewInlineKeyboardButtonData("Ожидание", fmt.Sprintf("wait %d", idTransaction)),
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.PaymentConfirmation.Label, c.Buttons.PaymentConfirmation.Command+strconv.Itoa(idTransaction)),
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.PaymentRefusal.Label, c.Buttons.PaymentRefusal.Command+strconv.Itoa(idTransaction)),
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.PaymentExpected.Label, c.Buttons.PaymentExpected.Command+strconv.Itoa(idTransaction)),
 		),
 	)
 
@@ -622,6 +628,7 @@ func (c *Chat) createDebitingFunds() {
 	fileName, err := c.downloadAttachment(idFile)
 	if err != nil {
 		c.writeToLog("createDebitingFunds/downloadAttachment", err)
+		c.sendAnyError()
 		return
 	}
 
@@ -639,6 +646,11 @@ func (c *Chat) createDebitingFunds() {
 
 	// TODO уведомить всех
 	_ = c.Send(tgbotapi.NewMessage(c.chatId, "Списание проведено успешно"))
+
+	if err = c.DebitingNotification(tag, sum, purpose.Text, fileName); err != nil {
+		c.writeToLog("DebitingNotification/GetMembers", err)
+		_ = c.Send(tgbotapi.NewMessage(c.chatId, "Не удалось оповестить участников о списании"))
+	}
 }
 
 func (c *Chat) downloadAttachment(fileId string) (fileName string, err error) {
@@ -660,11 +672,11 @@ func (c *Chat) downloadAttachment(fileId string) (fileName string, err error) {
 		return
 	}
 
-	fileName = strconv.FormatInt(c.chatId, 10) + "_" + path.Base(pathFile)
+	fileName = "Receipt" + "_" + time.Now().Format(timeLayout) + path.Ext(pathFile)
 
 	err = c.FTP.StoreFile(fileName, resp.Body)
 	if err != nil {
-		// TODO обработать ошибки
+		return "", err
 	}
 
 	return
@@ -762,7 +774,7 @@ func (c *Chat) sendAttemptsExceededError() {
 
 // newTag формирует новый тег. Выполняет проверку на существование. Если Тег уже существует формирует новый рекурсивно
 func (c *Chat) newTag() (string, error) {
-	symbols := []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+	symbols := []byte(alphabet)
 	result := make([]byte, rand.Intn(5)+5)
 	for i := range result {
 		result[i] = symbols[rand.Intn(len(symbols))]
@@ -780,4 +792,71 @@ func (c *Chat) newTag() (string, error) {
 
 func (c *Chat) writeToLog(location string, err error) {
 	log.Println(c.chatId, location, err)
+}
+
+// showListDebtors список должников
+func (c *Chat) showListDebtors() {
+	tag, err := c.DB.GetTag(c.chatId)
+	if err != nil {
+		c.writeToLog("showListDebtors/GetTag", err)
+		c.sendAnyError()
+	}
+
+	openCollections, err := c.DB.FindCashCollectionByStatus(tag, db.StatusCashCollectionOpen)
+	if err != nil {
+		c.writeToLog("showListDebtors/FindCashCollectionByStatus", err)
+		c.sendAnyError()
+	}
+
+	var strBuilder strings.Builder
+
+	if len(openCollections) == 0 {
+		strBuilder.WriteString("Должников нет")
+		_ = c.Send(tgbotapi.NewMessage(c.chatId, strBuilder.String()))
+		return
+	}
+
+	for i, collection := range openCollections {
+
+		strBuilder.WriteString(openCollections[i].Purpose + ":\n")
+
+		debtorsID, err := c.DB.GetDebtorsByCollection(collection.ID)
+		if err != nil {
+			c.writeToLog("showListDebtors/GetDebtorsByCollection", err)
+			c.sendAnyError()
+		}
+
+		for j, debtor := range debtorsID {
+			member, err := c.DB.GetInfoAboutMember(debtor)
+			if err != nil {
+				c.writeToLog("showListDebtors/GetInfoAboutMember", err)
+				c.sendAnyError()
+			}
+
+			strBuilder.WriteString(fmt.Sprintf("%d) %s (@%s)\n", j+1, member.Name, member.Login))
+		}
+
+		strBuilder.WriteString("\n")
+
+	}
+
+	_ = c.Send(tgbotapi.NewMessage(c.chatId, strBuilder.String()))
+}
+
+func (c *Chat) DebitingNotification(tag string, sum float64, purpose string, receipt string) error {
+
+	//members, err := c.DB.GetMembers(tag)
+	//if err != nil {
+	//	return err
+	//}
+	//
+	//for _, member := range members {
+	//	_ = c.Send(tgbotapi.NewMessage(member.ID, fmt.Sprintf("Списаны средства\nЦель: %s\nСумма: %.2f", purpose, sum)))
+	//	// TODO чек!
+	//}
+	//bot := c.GetBot()
+	//
+	//fileBytes, err := c.FTP.ReadFile(receipt)
+	//
+	return nil
 }

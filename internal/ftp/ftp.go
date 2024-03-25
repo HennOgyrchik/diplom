@@ -3,7 +3,6 @@ package ftp
 import (
 	"github.com/jlaffaye/ftp"
 	"io"
-	"io/ioutil"
 )
 
 type FTP string
@@ -28,27 +27,21 @@ func (ftp FTP) StoreFile(fileName string, r io.Reader) error {
 	}
 	defer client.Quit()
 
-	err = client.Stor(fileName, r)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return client.Stor(fileName, r)
 }
 
-func (ftp FTP) ReadFile() {
+func (ftp FTP) ReadFile(fileName string) ([]byte, error) {
 	client, err := serverConnection(ftp)
 	if err != nil {
-		return
+		return nil, err
 	}
 	defer client.Quit()
 
-	r, err := client.Retr("test-file.txt")
+	r, err := client.Retr(fileName)
 	if err != nil {
 		panic(err)
 	}
 	defer r.Close()
 
-	buf, err := ioutil.ReadAll(r)
-	println(string(buf))
+	return io.ReadAll(r)
 }

@@ -9,19 +9,16 @@ import (
 	"time"
 )
 
-//type Postgres struct {
-//	Address string
-//	DBName string
-//	User string
-//	Password string
-//	SSLMode string
-//}
+const (
+	StatusPaymentConfirmation = "подтвержден"
+	StatusPaymentExpectation  = "ожидание"
+	StatusPaymentRejection    = "отказ"
+	StatusCashCollectionOpen  = "открыт"
+)
 
 type ConnString string
 
 func dbConnection(connStr ConnString) (*sql.DB, error) {
-	//addr:=strings.Split(p.address,":")
-	//connStr := fmt.Sprintf("user=postgres password=111 dbname=postgres sslmode=disable host=%s port=%s",addr[0], addr[1])  //как то убрать логин и пароль, заменить ip на имя контейнера
 	db, err := sql.Open("postgres", string(connStr))
 
 	if err != nil {
@@ -37,47 +34,6 @@ func NewDBConnString(socket, dbName, user, password, sslMode string) (ConnString
 		return "", fmt.Errorf("Invalid format address")
 	}
 	return ConnString(fmt.Sprintf("user=%s password=%s dbname=%s sslmode=%s host=%s port=%s", user, password, dbName, sslMode, addr[0], addr[1])), nil
-}
-
-func (connStr ConnString) IsMember(memberId int64) (bool, error) {
-	db, err := dbConnection(connStr)
-	if err != nil {
-		return false, err
-	}
-	defer db.Close()
-
-	stmt, err := db.Prepare("select count(*) from members where member_id=$1")
-	if err != nil {
-		return false, err
-	}
-	defer stmt.Close()
-
-	var count int
-	err = stmt.QueryRow(memberId).Scan(&count)
-
-	if (err != nil) || (count == 0) {
-		return false, err
-	}
-
-	return true, nil
-}
-
-func (connStr ConnString) IsAdmin(memberId int64) (bool, error) {
-	db, err := dbConnection(connStr)
-	if err != nil {
-		return false, err
-	}
-	defer db.Close()
-
-	stmt, err := db.Prepare("select admin from members m  where member_id=$1")
-	if err != nil {
-		return false, err
-	}
-	defer stmt.Close()
-
-	var result bool
-	err = stmt.QueryRow(memberId).Scan(&result)
-	return result, err
 }
 
 func (connStr ConnString) DoesTagExist(tag string) (bool, error) {
@@ -179,23 +135,35 @@ func (connStr ConnString) DeleteFund(tag string) error {
 	return err
 }
 
-// GetTag возвращает тег фонда, в котором пользователь находится
-func (connStr ConnString) GetTag(memberId int64) (string, error) {
+func (connStr ConnString) GetDebtorsByCollection(cashCollectionId int) ([]int64, error) {
+	var members []int64
+
 	db, err := dbConnection(connStr)
 	if err != nil {
-		return "", err
+		return members, err
 	}
 	defer db.Close()
 
-	stmt, err := db.Prepare("select tag from members where member_id=$1")
+	stmt, err := db.Prepare("select member_id from members where member_id not in (select member_id from transactions t where t.cash_collection_id = $1 and status = $2)")
 	if err != nil {
-		return "", err
+		return members, err
 	}
 	defer stmt.Close()
 
-	var tag string
-	err = stmt.QueryRow(memberId).Scan(&tag)
-	return tag, err
+	rows, err := stmt.Query(cashCollectionId, StatusPaymentConfirmation)
+	if err != nil {
+		return members, err
+	}
+
+	for rows.Next() {
+		var memberId int64
+		if err = rows.Scan(&memberId); err != nil {
+			return members, err
+		}
+		members = append(members, memberId)
+	}
+
+	return members, nil
 }
 
 type Member struct {
@@ -221,6 +189,66 @@ func (connStr ConnString) AddMember(member Member) error {
 
 	_ = stmt.QueryRow(member.Tag, member.ID, member.IsAdmin, member.Login, member.Name)
 	return err
+}
+
+// GetTag возвращает тег фонда, в котором пользователь находится
+func (connStr ConnString) GetTag(memberId int64) (string, error) {
+	db, err := dbConnection(connStr)
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("select tag from members where member_id=$1")
+	if err != nil {
+		return "", err
+	}
+	defer stmt.Close()
+
+	var tag string
+	err = stmt.QueryRow(memberId).Scan(&tag)
+	return tag, err
+}
+
+func (connStr ConnString) IsMember(memberId int64) (bool, error) {
+	db, err := dbConnection(connStr)
+	if err != nil {
+		return false, err
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("select count(*) from members where member_id=$1")
+	if err != nil {
+		return false, err
+	}
+	defer stmt.Close()
+
+	var count int
+	err = stmt.QueryRow(memberId).Scan(&count)
+
+	if (err != nil) || (count == 0) {
+		return false, err
+	}
+
+	return true, nil
+}
+
+func (connStr ConnString) IsAdmin(memberId int64) (bool, error) {
+	db, err := dbConnection(connStr)
+	if err != nil {
+		return false, err
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("select admin from members m  where member_id=$1")
+	if err != nil {
+		return false, err
+	}
+	defer stmt.Close()
+
+	var result bool
+	err = stmt.QueryRow(memberId).Scan(&result)
+	return result, err
 }
 
 // GetMembers возвращает список пользователей фонда
@@ -358,6 +386,38 @@ func (connStr ConnString) CreateDebitingFunds(cashCollection CashCollection, mem
 
 	err = stmt.QueryRow(cashCollection.Tag, cashCollection.Sum, cashCollection.Comment, cashCollection.Purpose, receipt, cashCollection.CreateDate.Format(time.DateOnly), memberID).Scan(&ok)
 	return
+}
+
+func (connStr ConnString) FindCashCollectionByStatus(tag string, status string) ([]CashCollection, error) {
+	var list []CashCollection
+
+	db, err := dbConnection(connStr)
+	if err != nil {
+		return list, err
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("select id, tag, sum, status, comment, create_date, close_date, purpose from cash_collections cc where cc.tag = $1 and cc.status =$2")
+	if err != nil {
+
+		return list, err
+	}
+	defer stmt.Close()
+
+	rows, err := stmt.Query(tag, status)
+	if err != nil {
+		return list, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cc CashCollection
+		if err = rows.Scan(&cc.ID, &cc.Tag, &cc.Sum, &cc.Status, &cc.Comment, &cc.CreateDate, &cc.CloseDate, &cc.Purpose); err != nil {
+			return list, err
+		}
+		list = append(list, cc)
+	}
+	return list, nil
 }
 
 type Transaction struct {
