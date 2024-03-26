@@ -3,31 +3,42 @@ package ftp
 import (
 	"github.com/jlaffaye/ftp"
 	"io"
+	"time"
 )
 
-type FTP string
+type FTP struct {
+	Address  string
+	User     string
+	Password string
+}
 
-func serverConnection(address FTP) (client *ftp.ServerConn, err error) {
-	client, err = ftp.Dial(string(address))
+const (
+	timeLayout = "02-01-2006_15-04-05"
+)
+
+func serverConnection(ftpConf FTP) (client *ftp.ServerConn, err error) {
+	client, err = ftp.Dial(ftpConf.Address)
 	if err != nil {
 		return
 	}
 
-	if err = client.Login("user", "123"); err != nil {
+	if err = client.Login(ftpConf.User, ftpConf.Password); err != nil {
 		return
 	}
 
 	return
 }
 
-func (ftp FTP) StoreFile(fileName string, r io.Reader) error {
+func (ftp FTP) StoreFile(fileExt string, r io.Reader) (string, error) {
+	fileName := "Receipt" + "_" + time.Now().Format(timeLayout) + fileExt
+
 	client, err := serverConnection(ftp)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer client.Quit()
 
-	return client.Stor(fileName, r)
+	return fileName, client.Stor(fileName, r)
 }
 
 func (ftp FTP) ReadFile(fileName string) ([]byte, error) {
@@ -39,7 +50,7 @@ func (ftp FTP) ReadFile(fileName string) ([]byte, error) {
 
 	r, err := client.Retr(fileName)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 	defer r.Close()
 

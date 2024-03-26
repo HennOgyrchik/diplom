@@ -31,7 +31,7 @@ func dbConnection(connStr ConnString) (*sql.DB, error) {
 func NewDBConnString(socket, dbName, user, password, sslMode string) (ConnString, error) {
 	addr := strings.Split(socket, ":")
 	if len(addr) != 2 {
-		return "", fmt.Errorf("Invalid format address")
+		return "", InvalidAddressError
 	}
 	return ConnString(fmt.Sprintf("user=%s password=%s dbname=%s sslmode=%s host=%s port=%s", user, password, dbName, sslMode, addr[0], addr[1])), nil
 }

@@ -28,13 +28,15 @@ func NewConfig() (Config, error) {
 	}
 
 	var tmp struct {
-		Token     string `json:"Token"`
-		FTP       string `json:"FTP_Address"`
-		PAddress  string `json:"PSQL_Address"`
-		PDBName   string `json:"PSQL_DBName"`
-		PUser     string `json:"PSQL_User"`
-		PPassword string `json:"PSQL_Password"`
-		PSSLMode  string `json:"PSQL_SSLMode"`
+		Token       string `json:"Token"`
+		FTPAddress  string `json:"FTP_Address"`
+		FTPUser     string `json:"FTP_User"`
+		FTPPassword string `json:"FTP_Password"`
+		PAddress    string `json:"PSQL_Address"`
+		PDBName     string `json:"PSQL_DBName"`
+		PUser       string `json:"PSQL_User"`
+		PPassword   string `json:"PSQL_Password"`
+		PSSLMode    string `json:"PSQL_SSLMode"`
 	}
 	err = json.Unmarshal(data, &tmp)
 	if err != nil {
@@ -42,7 +44,11 @@ func NewConfig() (Config, error) {
 	}
 
 	conf.Token = tmp.Token
-	conf.FTP = ftp.FTP(tmp.FTP)
+	conf.FTP = ftp.FTP{
+		Address:  tmp.FTPAddress,
+		User:     tmp.FTPUser,
+		Password: tmp.FTPPassword,
+	}
 	conf.DB, err = db.NewDBConnString(tmp.PAddress, tmp.PDBName, tmp.PUser, tmp.PPassword, tmp.PSSLMode)
 	return conf, err
 }

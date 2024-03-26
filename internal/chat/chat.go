@@ -18,7 +18,6 @@ import (
 
 const (
 	alphabet                 = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	timeLayout               = "02-01-2006_15:04:05"
 	typeOfResponseText       = "text"
 	typeOfResponseAttachment = "attachment"
 )
@@ -646,6 +645,7 @@ func (c *Chat) createDebitingFunds() {
 	}
 
 	fileName, err := c.downloadAttachment(idFile)
+
 	if err != nil {
 		c.writeToLog("createDebitingFunds/downloadAttachment", err)
 		c.sendAnyError()
@@ -691,9 +691,7 @@ func (c *Chat) downloadAttachment(fileId string) (fileName string, err error) {
 		return
 	}
 
-	fileName = "Receipt" + "_" + time.Now().Format(timeLayout) + path.Ext(pathFile)
-
-	err = c.FTP.StoreFile(fileName, resp.Body)
+	fileName, err = c.FTP.StoreFile(path.Ext(pathFile), resp.Body)
 	if err != nil {
 		return "", err
 	}
