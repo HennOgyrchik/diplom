@@ -34,7 +34,8 @@ type ButtonList struct {
 	DebtorList,
 	Payment, PaymentConfirmation, PaymentRefusal, PaymentExpected,
 	DeleteMember, DeleteMemberYes, DeleteMemberNo,
-	Leave, LeaveYes, LeaveNo Button
+	Leave, LeaveYes, LeaveNo,
+	ShowTag Button
 }
 
 type CommandList struct {
@@ -50,7 +51,8 @@ type CommandList struct {
 	Menu,
 	ShowListDebtors,
 	DeleteMember, DeleteMemberYes,
-	Leave, LeaveYes string
+	Leave, LeaveYes,
+	ShowTag string
 }
 
 func NewService() (*Service, error) {
@@ -67,8 +69,8 @@ func NewService() (*Service, error) {
 	bot.Debug = false
 
 	cmds := CommandList{
-		CreateFund:           "CreateFund",
-		CreateFundYes:        "CreateFundYes",
+		CreateFund:           "createFund",
+		CreateFundYes:        "createFundYes",
 		Join:                 "join",
 		ShowBalance:          "showBalance",
 		CreateCashCollection: "createCashCollection",
@@ -85,6 +87,7 @@ func NewService() (*Service, error) {
 		DeleteMemberYes:      "deleteMemberYes",
 		Leave:                "leave",
 		LeaveYes:             "leaveYes",
+		ShowTag:              "showTag",
 	}
 
 	return &Service{
@@ -113,6 +116,10 @@ func NewService() (*Service, error) {
 			ShowBalance: Button{
 				Label:   "Баланс",
 				Command: cmds.ShowBalance,
+			},
+			ShowTag: Button{
+				Label:   "Тег",
+				Command: cmds.ShowTag,
 			},
 			AwaitingPayment: Button{
 				Label:   "Оплатить",

@@ -84,6 +84,8 @@ func (c *Chat) CommandSwitcher(query string) bool {
 		go c.startMenu()
 	case cmd == c.Commands.Menu:
 		go c.showMenu()
+	case cmd == c.Commands.ShowTag:
+		go c.showTag()
 	case cmd == c.Commands.CreateFund:
 		go c.createFund()
 	case cmd == c.Commands.Join:
@@ -218,6 +220,8 @@ func (c *Chat) showMenu() {
 			tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.Members.Label, c.Buttons.Members.Command),
 				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.DebtorList.Label, c.Buttons.DebtorList.Command)),
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.ShowTag.Label, c.Buttons.ShowTag.Command)),
 		)
 	}
 
@@ -997,4 +1001,16 @@ func (c *Chat) leaveYes() {
 
 	_ = c.Send(tgbotapi.NewMessage(c.chatId, "Вы покинули фонд"))
 	c.startMenu()
+}
+
+func (c *Chat) showTag() {
+	tag, err := c.DB.GetTag(c.chatId)
+	if err != nil {
+		c.writeToLog("showTag/GetTag", err)
+		c.sendAnyError()
+		return
+	}
+
+	_ = c.Send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Тег фонда: %s", tag)))
+
 }
