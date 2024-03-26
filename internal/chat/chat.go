@@ -85,12 +85,12 @@ func (c *Chat) CommandSwitcher(query string) bool {
 		go c.startMenu()
 	case cmd == c.Commands.Menu:
 		go c.showMenu()
-	case cmd == c.Commands.ConfirmationCreateNewFund:
-		go c.confirmationCreateNewFund()
+	case cmd == c.Commands.CreateFund:
+		go c.createFund()
 	case cmd == c.Commands.Join:
 		go c.join()
-	case cmd == c.Commands.CreateNewFund:
-		go c.createNewFund()
+	case cmd == c.Commands.CreateFundYes:
+		go c.CreateFundYes()
 	case cmd == c.Commands.ShowBalance:
 		go c.showBalance()
 	case cmd == c.Commands.DeleteMember:
@@ -218,7 +218,7 @@ func (c *Chat) showMenu() {
 				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.CreateDebitingFunds.Label, c.Buttons.CreateDebitingFunds.Command)),
 			tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.Members.Label, c.Buttons.Members.Command),
-				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.Statistics.Label, c.Buttons.Statistics.Command)),
+				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.DebtorList.Label, c.Buttons.DebtorList.Command)),
 		)
 	}
 
@@ -226,11 +226,11 @@ func (c *Chat) showMenu() {
 	_ = c.Send(msg)
 }
 
-// confirmationCreationNewFund проверяет состоит ли пользователь в другом фонде, если не состоит, то запрашивает подтверждение операции
-func (c *Chat) confirmationCreateNewFund() {
+// createFund проверяет состоит ли пользователь в другом фонде, если не состоит, то запрашивает подтверждение операции
+func (c *Chat) createFund() {
 	ok, err := c.DB.IsMember(c.chatId)
 	if err != nil {
-		c.writeToLog("confirmationCreateNewFund/isMember", err)
+		c.writeToLog("createFund/isMember", err)
 		c.sendAnyError()
 		return
 	}
@@ -243,8 +243,8 @@ func (c *Chat) confirmationCreateNewFund() {
 
 	var numericKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.ConfirmationCreateFoundYes.Label, c.Buttons.ConfirmationCreateFoundYes.Command),
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.ConfirmationCreateFoundNo.Label, c.Buttons.ConfirmationCreateFoundNo.Command),
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.CreateFoundYes.Label, c.Buttons.CreateFoundYes.Command),
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.CreateFoundNo.Label, c.Buttons.CreateFoundNo.Command),
 		),
 	)
 	msg.ReplyMarkup = &numericKeyboard
@@ -252,8 +252,8 @@ func (c *Chat) confirmationCreateNewFund() {
 	_ = c.Send(msg)
 }
 
-// creatingNewFund создает новый фонд
-func (c *Chat) createNewFund() {
+// CreateFundYes создает новый фонд
+func (c *Chat) CreateFundYes() {
 	sum, err := c.getFloatFromUser("Введите начальную сумму фонда")
 	if err != nil {
 		if !errors.Is(err, Close) {
@@ -264,7 +264,7 @@ func (c *Chat) createNewFund() {
 
 	tag, err := c.newTag()
 	if err != nil {
-		c.writeToLog("createNewFund/newTag", err)
+		c.writeToLog("CreateFundYes/newTag", err)
 		c.sendAnyError()
 	}
 
@@ -277,7 +277,7 @@ func (c *Chat) createNewFund() {
 	}
 
 	if err = c.DB.CreateFund(tag, sum); err != nil {
-		c.writeToLog("createNewFund", err)
+		c.writeToLog("CreateFundYes", err)
 		c.sendAnyError()
 		return
 	}
@@ -289,16 +289,16 @@ func (c *Chat) createNewFund() {
 		Login:   c.username,
 		Name:    name,
 	}); err != nil {
-		c.writeToLog("createNewFund/AddMember", err)
+		c.writeToLog("CreateFundYes/AddMember", err)
 		err = c.DB.DeleteFund(tag)
-		c.writeToLog("createNewFund/DeleteFund", err)
+		c.writeToLog("CreateFundYes/DeleteFund", err)
 		c.sendAnyError()
 		return
 	}
 
 	if err = c.Send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Новый фонд создан успешно! Присоединиться к фонду можно, используя тег: %s \nВнимание! Не показывайте этот тег посторонним людям.", tag))); err != nil {
 		if err = c.DB.DeleteFund(tag); err != nil {
-			c.writeToLog("createNewFund/DeleteFund", err)
+			c.writeToLog("CreateFundYes/DeleteFund", err)
 		}
 		return
 	}

@@ -24,23 +24,21 @@ type Button struct {
 }
 
 type ButtonList struct {
-	CreateFound,
+	CreateFound, CreateFoundYes, CreateFoundNo,
 	Join,
 	ShowBalance,
 	AwaitingPayment,
 	CreateCashCollection,
 	CreateDebitingFunds,
 	Members,
-	Statistics,
-	ConfirmationCreateFoundYes, ConfirmationCreateFoundNo,
+	DebtorList,
 	Payment, PaymentConfirmation, PaymentRefusal, PaymentExpected,
-	DeleteMember,
-	DeleteMemberYes, DeleteMemberNo,
+	DeleteMember, DeleteMemberYes, DeleteMemberNo,
 	Leave, LeaveYes, LeaveNo Button
 }
 
 type CommandList struct {
-	ConfirmationCreateNewFund,
+	CreateFund, CreateFundYes,
 	Join,
 	ShowBalance,
 	CreateCashCollection,
@@ -48,17 +46,11 @@ type CommandList struct {
 	GetMembers,
 	CreateNewFund,
 	Start,
-	Payment,
-	PaymentAccept,
-	PaymentReject,
-	PaymentWait,
+	Payment, PaymentAccept, PaymentReject, PaymentWait,
 	Menu,
 	ShowListDebtors,
-	DeleteMember,
-	DeleteMemberYes,
-	//DeleteMemberNo,
-	Leave,
-	LeaveYes string
+	DeleteMember, DeleteMemberYes,
+	Leave, LeaveYes string
 }
 
 func NewService() (*Service, error) {
@@ -75,24 +67,25 @@ func NewService() (*Service, error) {
 	bot.Debug = false
 
 	cmds := CommandList{
-		ConfirmationCreateNewFund: "confirmationCreateNewFund",
-		Join:                      "join",
-		ShowBalance:               "showBalance",
-		CreateCashCollection:      "createCashCollection",
-		CreateDebitingFunds:       "createDebitingFunds",
-		GetMembers:                "getMembers",
-		CreateNewFund:             "createNewFund",
-		Start:                     "start",
-		Payment:                   "payment",
-		PaymentAccept:             "accept",
-		PaymentReject:             "reject",
-		PaymentWait:               "wait",
-		Menu:                      "menu",
-		ShowListDebtors:           "showListDebtors",
-		DeleteMember:              "deleteMember",
-		DeleteMemberYes:           "deleteMemberYes",
-		Leave:                     "leave",
-		LeaveYes:                  "leaveYes",
+		CreateFund:           "CreateFund",
+		CreateFundYes:        "CreateFundYes",
+		Join:                 "join",
+		ShowBalance:          "showBalance",
+		CreateCashCollection: "createCashCollection",
+		CreateDebitingFunds:  "createDebitingFunds",
+		GetMembers:           "getMembers",
+		//CreateNewFund:        "createNewFund",
+		Start:           "start",
+		Payment:         "payment",
+		PaymentAccept:   "accept",
+		PaymentReject:   "reject",
+		PaymentWait:     "wait",
+		Menu:            "menu",
+		ShowListDebtors: "showListDebtors",
+		DeleteMember:    "deleteMember",
+		DeleteMemberYes: "deleteMemberYes",
+		Leave:           "leave",
+		LeaveYes:        "leaveYes",
 	}
 
 	return &Service{
@@ -104,7 +97,15 @@ func NewService() (*Service, error) {
 		Buttons: ButtonList{
 			CreateFound: Button{
 				Label:   "Создать фонд",
-				Command: cmds.ConfirmationCreateNewFund,
+				Command: cmds.CreateFund,
+			},
+			CreateFoundYes: Button{
+				Label:   "Да",
+				Command: cmds.CreateFundYes,
+			},
+			CreateFoundNo: Button{
+				Label:   "Нет",
+				Command: cmds.Start,
 			},
 			Join: Button{
 				Label:   "Присоединиться",
@@ -142,17 +143,9 @@ func NewService() (*Service, error) {
 				Label:   "Участники",
 				Command: cmds.GetMembers,
 			},
-			Statistics: Button{
+			DebtorList: Button{
 				Label:   "Должники",
 				Command: cmds.ShowListDebtors,
-			},
-			ConfirmationCreateFoundYes: Button{
-				Label:   "Да",
-				Command: cmds.CreateNewFund,
-			},
-			ConfirmationCreateFoundNo: Button{
-				Label:   "Нет",
-				Command: cmds.Start,
 			},
 			Payment: Button{
 				Label:   "Оплатить",
