@@ -492,7 +492,7 @@ func (connStr ConnString) DeleteMember(tag string, memberId int64) error {
 	}
 	defer db.Close()
 
-	stmt, err := db.Prepare("delete from members where tag = $1 and member_id = $2")
+	stmt, err := db.Prepare("call delete_member($1,$2)")
 	if err != nil {
 		return err
 	}

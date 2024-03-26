@@ -103,6 +103,10 @@ func (c *Chat) CommandSwitcher(query string) bool {
 		go c.createDebitingFunds()
 	case cmd == c.Commands.ShowListDebtors:
 		go c.showListDebtors()
+	case cmd == c.Commands.Leave:
+		go c.leave()
+	case cmd == c.Commands.LeaveYes:
+		go c.leaveYes()
 	case deletePat.MatchString(cmd): //удалить пользователя
 		go func() {
 			id, err := strconv.Atoi(strings.ReplaceAll(cmd, c.Commands.DeleteMemberYes, ""))
@@ -951,4 +955,48 @@ func (c *Chat) deleteMemberYes(id int64) {
 	}
 
 	_ = c.Send(tgbotapi.NewMessage(c.chatId, "Пользователь удален"))
+}
+
+func (c *Chat) leave() {
+	member, err := c.DB.GetInfoAboutMember(c.chatId)
+	if err != nil {
+		c.writeToLog("leave/GetInfoAboutMember", err)
+		c.sendAnyError()
+		return
+	}
+
+	if member.IsAdmin {
+		_ = c.Send(tgbotapi.NewMessage(c.chatId, "Вы являетесь администратором и не можете покинуть фонд"))
+		return
+	}
+
+	msg := tgbotapi.NewMessage(c.chatId, "Вы действительно хотите покинуть фонд?")
+
+	var yesNoKeyboard = tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.LeaveYes.Label, c.Buttons.LeaveYes.Command),
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.LeaveNo.Label, c.Buttons.LeaveNo.Command),
+		),
+	)
+
+	msg.ReplyMarkup = &yesNoKeyboard
+	_ = c.Send(msg)
+}
+
+func (c *Chat) leaveYes() {
+	tag, err := c.DB.GetTag(c.chatId)
+	if err != nil {
+		c.writeToLog("leaveYes/GetTag", err)
+		c.sendAnyError()
+		return
+	}
+
+	if err = c.DB.DeleteMember(tag, c.chatId); err != nil {
+		c.writeToLog("leaveYes/DeleteMember", err)
+		c.sendAnyError()
+		return
+	}
+
+	_ = c.Send(tgbotapi.NewMessage(c.chatId, "Вы покинули фонд"))
+	c.startMenu()
 }
