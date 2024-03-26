@@ -485,59 +485,20 @@ func (connStr ConnString) ChangeStatusTransaction(idTransaction int, status stri
 	return nil
 }
 
-//
-//func ExistsFund(tag string) (result bool, err error) {
-//	result = false
-//
-//	db, err := dbConnection()
-//	if err != nil {
-//		return
-//	}
-//	defer db.Close()
-//
-//	stmt, err := db.Prepare("select count(*) from funds where tag=$1")
-//	if err != nil {
-//		return
-//	}
-//
-//	var count int
-//	err = stmt.QueryRow(tag).Scan(&count)
-//
-//	if (err != nil) || (count == 0) {
-//		return
-//	}
-//
-//	result = true
-//	return
-//}
+func (connStr ConnString) DeleteMember(tag string, memberId int64) error {
+	db, err := dbConnection(connStr)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
 
-//
+	stmt, err := db.Prepare("delete from members where tag = $1 and member_id = $2")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
 
-//
-//func GetDebtors(idCashCollection int) (members []int64, err error) {
-//	db, err := dbConnection()
-//	if err != nil {
-//		return
-//	}
-//	defer db.Close()
-//
-//	stmt, err := db.Prepare("select member_id from members where member_id not in (select member_id  from transactions where cash_collection_id =$1 and status = 'подтвержден')")
-//	if err != nil {
-//		return
-//	}
-//
-//	rows, err := stmt.Query(idCashCollection)
-//	if err != nil {
-//		return
-//	}
-//	defer rows.Close()
-//
-//	for rows.Next() {
-//		var member int64
-//		if err = rows.Scan(&member); err != nil {
-//			return
-//		}
-//		members = append(members, member)
-//	}
-//	return
-//}
+	_ = stmt.QueryRow(tag, memberId)
+
+	return nil
+}

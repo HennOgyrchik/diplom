@@ -17,8 +17,10 @@ import (
 )
 
 const (
-	alphabet   = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	timeLayout = "02-01-2006_15:04:05"
+	alphabet                 = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	timeLayout               = "02-01-2006_15:04:05"
+	typeOfResponseText       = "text"
+	typeOfResponseAttachment = "attachment"
 )
 
 type Chat struct {
@@ -76,6 +78,7 @@ func (c *Chat) CommandSwitcher(query string) bool {
 	var rejectionPat = regexp.MustCompile(`^reject\d*.`)
 	var expectationPat = regexp.MustCompile(`^wait\d*.`)
 	var acceptPat = regexp.MustCompile(`^accept\d*.`)
+	var deletePat = regexp.MustCompile(`^deleteMemberYes\d*.`)
 
 	switch cmd := query; {
 	case cmd == c.Commands.Start:
@@ -90,8 +93,8 @@ func (c *Chat) CommandSwitcher(query string) bool {
 		go c.createNewFund()
 	case cmd == c.Commands.ShowBalance:
 		go c.showBalance()
-	case cmd == "test":
-		go c.test()
+	case cmd == c.Commands.DeleteMember:
+		go c.deleteMember()
 	case cmd == c.Commands.GetMembers:
 		go c.getMembers()
 	case cmd == c.Commands.CreateCashCollection:
@@ -100,6 +103,17 @@ func (c *Chat) CommandSwitcher(query string) bool {
 		go c.createDebitingFunds()
 	case cmd == c.Commands.ShowListDebtors:
 		go c.showListDebtors()
+	case deletePat.MatchString(cmd): //удалить пользователя
+		go func() {
+			id, err := strconv.Atoi(strings.ReplaceAll(cmd, c.Commands.DeleteMemberYes, ""))
+			if err != nil {
+				c.writeToLog("CommandSwitcher/deletePat", err)
+				c.sendAnyError()
+				return
+			}
+			c.deleteMemberYes(int64(id))
+		}()
+
 	case paymentPat.MatchString(cmd): // оплата
 		go func() {
 			cashCollectionId, err := strconv.Atoi(strings.ReplaceAll(cmd, c.Commands.Payment, ""))
@@ -200,7 +214,8 @@ func (c *Chat) showMenu() {
 				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.CreateDebitingFunds.Label, c.Buttons.CreateDebitingFunds.Command)),
 			tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.Members.Label, c.Buttons.Members.Command),
-				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.Statistics.Label, c.Buttons.Statistics.Command)))
+				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.Statistics.Label, c.Buttons.Statistics.Command)),
+		)
 	}
 
 	msg.ReplyMarkup = &menuKeyboard
@@ -319,7 +334,7 @@ func (c *Chat) join() {
 		return
 	}
 
-	response, err := c.getResponse("text")
+	response, err := c.getResponse(typeOfResponseText)
 	if err != nil {
 		if !errors.Is(err, Close) {
 			c.sendAttemptsExceededError()
@@ -363,21 +378,7 @@ func (c *Chat) join() {
 	_ = c.Send(tgbotapi.NewMessage(c.chatId, "Вы успешно присоединились к фонду"))
 }
 
-func (c *Chat) getMembers() {
-	tag, err := c.DB.GetTag(c.chatId)
-	if err != nil {
-		c.writeToLog("getMembers/getTag", err)
-		c.sendAnyError()
-		return
-	}
-
-	members, err := c.DB.GetMembers(tag)
-	if err != nil {
-		c.writeToLog("getMembers", err)
-		c.sendAnyError()
-		return
-	}
-
+func (c *Chat) sendListMembers(members []db.Member) error {
 	var strBuilder strings.Builder
 
 	strBuilder.WriteString("Список участников:\n")
@@ -391,8 +392,23 @@ func (c *Chat) getMembers() {
 
 	}
 
-	_ = c.Send(tgbotapi.NewMessage(c.chatId, strBuilder.String()))
+	var numericKeyboard = tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.DeleteMember.Label, c.Buttons.DeleteMember.Command)))
 
+	msg := tgbotapi.NewMessage(c.chatId, strBuilder.String())
+	msg.ReplyMarkup = &numericKeyboard
+
+	return c.Send(msg)
+}
+
+func (c *Chat) getListMembers() ([]db.Member, error) {
+	tag, err := c.DB.GetTag(c.chatId)
+	if err != nil {
+		return []db.Member{}, err
+	}
+
+	return c.DB.GetMembers(tag)
 }
 
 func (c *Chat) createCashCollection() {
@@ -408,7 +424,7 @@ func (c *Chat) createCashCollection() {
 		return
 	}
 
-	answer, err := c.getResponse("text")
+	answer, err := c.getResponse(typeOfResponseText)
 	if err != nil {
 		if !errors.Is(err, Close) {
 			c.sendAttemptsExceededError()
@@ -592,7 +608,7 @@ func (c *Chat) createDebitingFunds() {
 		return
 	}
 
-	purpose, err := c.getResponse("text")
+	purpose, err := c.getResponse(typeOfResponseText)
 	if err != nil {
 		if !errors.Is(err, Close) {
 			c.sendAttemptsExceededError()
@@ -610,7 +626,7 @@ func (c *Chat) createDebitingFunds() {
 		return
 	}
 
-	attachment, err := c.getResponse("attachment")
+	attachment, err := c.getResponse(typeOfResponseAttachment)
 	if err != nil {
 		if !errors.Is(err, Close) {
 			c.sendAttemptsExceededError()
@@ -644,7 +660,6 @@ func (c *Chat) createDebitingFunds() {
 		return
 	}
 
-	// TODO уведомить всех
 	_ = c.Send(tgbotapi.NewMessage(c.chatId, "Списание проведено успешно"))
 
 	if err = c.DebitingNotification(tag, sum, purpose.Text, fileName); err != nil {
@@ -690,7 +705,7 @@ func (c *Chat) getFloatFromUser(message string) (float64, error) {
 	}
 
 	for i := 0; i < 3; i++ {
-		answer, err := c.getResponse("text")
+		answer, err := c.getResponse(typeOfResponseText)
 
 		if err != nil {
 			return sum, err
@@ -719,7 +734,7 @@ func (c *Chat) getName() (string, error) {
 		return "", err
 	}
 
-	answer, err := c.getResponse("text")
+	answer, err := c.getResponse(typeOfResponseText)
 	if err != nil {
 		return "", err
 	}
@@ -742,9 +757,9 @@ func (c *Chat) getResponse(typeOfResponse string) (*tgbotapi.Message, error) {
 		}
 
 		if answer.Photo != nil || answer.Document != nil {
-			typeOfMessage = "attachment"
+			typeOfMessage = typeOfResponseAttachment
 		} else {
-			typeOfMessage = "text"
+			typeOfMessage = typeOfResponseText
 		}
 
 		if typeOfResponse != typeOfMessage {
@@ -866,4 +881,74 @@ func (c *Chat) DebitingNotification(tag string, sum float64, purpose string, rec
 	}
 
 	return nil
+}
+
+func (c *Chat) deleteMember() {
+	members, err := c.getListMembers()
+	if err != nil {
+		c.writeToLog("deleteMember/getListMembers", err)
+	}
+
+	msg := tgbotapi.NewMessage(c.chatId, "Введите номер пользователя, которого необходимо удалить")
+	if err := c.Send(msg); err != nil {
+		c.writeToLog("deleteMember/send", err)
+		return
+	}
+
+	response, err := c.getResponse(typeOfResponseText)
+
+	var number int
+
+	for i := 0; i < 3; i++ {
+		number, err = strconv.Atoi(response.Text)
+		if err != nil {
+			if err = c.Send(tgbotapi.NewMessage(c.chatId, "Введите число")); err != nil {
+				c.writeToLog("deleteMember/send", err)
+				return
+			}
+			continue
+		}
+		break
+	}
+
+	msg.Text = fmt.Sprintf("Вы действительно хотите удалить %s (@%s)?", members[number-1].Name, members[number-1].Login)
+
+	var yesNoKeyboard = tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.DeleteMemberYes.Label, c.Buttons.DeleteMemberYes.Command+strconv.FormatInt(members[number-1].ID, 10)),
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.DeleteMemberNo.Label, c.Buttons.DeleteMemberNo.Command),
+		),
+	)
+
+	msg.ReplyMarkup = &yesNoKeyboard
+	_ = c.Send(msg)
+
+}
+
+func (c *Chat) getMembers() {
+	members, err := c.getListMembers()
+	if err != nil {
+		c.writeToLog("getMembers/getListMembers", err)
+		c.sendAnyError()
+		return
+	}
+
+	_ = c.sendListMembers(members)
+}
+
+func (c *Chat) deleteMemberYes(id int64) {
+	tag, err := c.DB.GetTag(c.chatId)
+	if err != nil {
+		c.writeToLog("deleteMemberYes/GetTag", err)
+		c.sendAnyError()
+		return
+	}
+
+	if err = c.DB.DeleteMember(tag, id); err != nil {
+		c.writeToLog("deleteMemberYes/DeleteMember", err)
+		c.sendAnyError()
+		return
+	}
+
+	_ = c.Send(tgbotapi.NewMessage(c.chatId, "Пользователь удален"))
 }

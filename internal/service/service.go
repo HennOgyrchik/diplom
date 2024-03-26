@@ -38,7 +38,10 @@ type ButtonList struct {
 	Payment,
 	PaymentConfirmation,
 	PaymentRefusal,
-	PaymentExpected Button
+	PaymentExpected,
+	DeleteMember,
+	DeleteMemberYes,
+	DeleteMemberNo Button
 }
 
 type CommandList struct {
@@ -55,7 +58,10 @@ type CommandList struct {
 	PaymentReject,
 	PaymentWait,
 	Menu,
-	ShowListDebtors string
+	ShowListDebtors,
+	DeleteMember,
+	DeleteMemberYes,
+	DeleteMemberNo string
 }
 
 func NewService() (*Service, error) {
@@ -86,6 +92,9 @@ func NewService() (*Service, error) {
 		PaymentWait:               "wait",
 		Menu:                      "menu",
 		ShowListDebtors:           "showListDebtors",
+		DeleteMember:              "deleteMember",
+		DeleteMemberYes:           "deleteMemberYes",
+		DeleteMemberNo:            "menu",
 	}
 
 	return &Service{
@@ -154,6 +163,18 @@ func NewService() (*Service, error) {
 			PaymentExpected: Button{
 				Label:   "Ожидание",
 				Command: cmds.PaymentWait,
+			},
+			DeleteMember: Button{
+				Label:   "Удалить участника",
+				Command: cmds.DeleteMember,
+			},
+			DeleteMemberYes: Button{
+				Label:   "Да",
+				Command: cmds.DeleteMemberYes,
+			},
+			DeleteMemberNo: Button{
+				Label:   "Нет",
+				Command: cmds.DeleteMemberNo,
 			}},
 		Commands: cmds,
 	}, nil
