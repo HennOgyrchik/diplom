@@ -845,18 +845,25 @@ func (c *Chat) showListDebtors() {
 
 func (c *Chat) DebitingNotification(tag string, sum float64, purpose string, receipt string) error {
 
-	//members, err := c.DB.GetMembers(tag)
-	//if err != nil {
-	//	return err
-	//}
-	//
-	//for _, member := range members {
-	//	_ = c.Send(tgbotapi.NewMessage(member.ID, fmt.Sprintf("Списаны средства\nЦель: %s\nСумма: %.2f", purpose, sum)))
-	//	// TODO чек!
-	//}
-	//bot := c.GetBot()
-	//
-	//fileBytes, err := c.FTP.ReadFile(receipt)
-	//
+	members, err := c.DB.GetMembers(tag)
+	if err != nil {
+		return err
+	}
+
+	bot := c.GetBot()
+
+	fb, err := c.FTP.ReadFile(receipt)
+	doc := tgbotapi.FileBytes{
+		Name:  receipt,
+		Bytes: fb,
+	}
+
+	for _, member := range members {
+		if member.ID != c.chatId {
+			_ = c.Send(tgbotapi.NewMessage(member.ID, fmt.Sprintf("Списаны средства\nЦель: %s\nСумма: %.2f", purpose, sum)))
+			_, _ = bot.Send(tgbotapi.NewDocument(member.ID, doc))
+		}
+	}
+
 	return nil
 }
