@@ -1,10 +1,10 @@
 package service
 
 import (
+	"context"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"project1/internal/config"
-	"project1/internal/db"
-	"project1/internal/ftp"
+	"log"
+	"project1/internal/env"
 	"sync"
 )
 
@@ -12,10 +12,10 @@ type Service struct {
 	bot         *tgbotapi.BotAPI
 	wg          *sync.RWMutex
 	waitingList map[int64]chan *tgbotapi.Message
-	DB          db.ConnString
-	FTP         ftp.FTP
 	Buttons     ButtonList
 	Commands    CommandList
+	*env.Env
+	Ctx context.Context
 }
 
 type Button struct {
@@ -61,16 +61,15 @@ type CommandList struct {
 	SetAdmin, SetAdminYes string
 }
 
-func NewService() (*Service, error) {
-	var serv Service
-	conf, err := config.NewConfig()
+func NewService(ctx context.Context) (*Service, error) {
+	e, err := env.Setup(ctx)
 	if err != nil {
-		return &serv, err
+		log.Fatal("setup.Setup: ", err)
 	}
 
-	bot, err := tgbotapi.NewBotAPI(conf.Token)
+	bot, err := tgbotapi.NewBotAPI(e.Token)
 	if err != nil {
-		return &serv, err
+		return nil, err
 	}
 	bot.Debug = false
 
@@ -104,8 +103,7 @@ func NewService() (*Service, error) {
 		bot:         bot,
 		wg:          &sync.RWMutex{},
 		waitingList: make(map[int64]chan *tgbotapi.Message),
-		DB:          conf.DB,
-		FTP:         conf.FTP,
+		Env:         e,
 		Buttons: ButtonList{
 			CreateFound: Button{
 				Label:   "Создать фонд",
@@ -204,6 +202,7 @@ func NewService() (*Service, error) {
 				Command: cmds.Menu,
 			}},
 		Commands: cmds,
+		Ctx:      ctx,
 	}, nil
 }
 

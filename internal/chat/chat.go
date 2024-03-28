@@ -26,27 +26,14 @@ const (
 type Chat struct {
 	username string
 	chatId   int64
-	msg      *tgbotapi.Message
 	*service.Service
 }
 
-func (c *Chat) test() error { // 3 попытки на отправку
-	var err error
-
-	for i := 0; i < 3; i++ {
-		if err = c.Send(tgbotapi.NewMessage(c.chatId, "тестовая кнопка")); err == nil {
-			return err
-		}
-	}
-	return err
-}
-
-func NewChat(username string, chatId int64, service *service.Service, message *tgbotapi.Message) *Chat {
+func NewChat(username string, chatId int64, service *service.Service) *Chat {
 
 	return &Chat{
 		username: username,
 		chatId:   chatId,
-		msg:      message,
 		Service:  service,
 	}
 }
@@ -55,12 +42,8 @@ func (c *Chat) GetChatId() int64 {
 	return c.chatId
 }
 
-func (c *Chat) GetMessage() *tgbotapi.Message {
-	return c.msg
-}
-
 // Send 3 попытки на отправку, иначе удалить из списка ожидания и вернуть ошибку. Возвращает AttemptsExceeded
-func (c *Chat) Send(message tgbotapi.MessageConfig) error {
+func (c *Chat) Send(message tgbotapi.Chattable) error {
 
 	for i := 0; i < 3; i++ {
 		if _, err := c.Service.GetBot().Send(message); err == nil {
@@ -84,39 +67,39 @@ func (c *Chat) CommandSwitcher(query string) bool {
 
 	switch cmd := query; {
 	case cmd == c.Commands.Start:
-		go c.startMenu()
+		c.startMenu()
 	case cmd == c.Commands.Menu:
-		go c.showMenu()
+		c.showMenu()
 	case cmd == c.Commands.ShowTag:
-		go c.showTag()
+		c.showTag()
 	case cmd == c.Commands.CreateFund:
-		go c.createFund()
+		c.createFund()
 	case cmd == c.Commands.SetAdmin:
-		go c.setAdmin()
+		c.setAdmin()
 	case cmd == c.Commands.Join:
-		go c.join()
+		c.join()
 	case cmd == c.Commands.AwaitingPayment:
-		go c.awaitingPayment()
+		c.awaitingPayment()
 	case cmd == c.Commands.CreateFundYes:
-		go c.CreateFundYes()
+		c.CreateFundYes()
 	case cmd == c.Commands.ShowBalance:
-		go c.showBalance()
+		c.showBalance()
 	case cmd == c.Commands.DeleteMember:
-		go c.deleteMember()
+		c.deleteMember()
 	case cmd == c.Commands.GetMembers:
-		go c.getMembers()
+		c.getMembers()
 	case cmd == c.Commands.CreateCashCollection:
-		go c.createCashCollection()
+		c.createCashCollection()
 	case cmd == c.Commands.CreateDebitingFunds:
-		go c.createDebitingFunds()
+		c.createDebitingFunds()
 	case cmd == c.Commands.ShowListDebtors:
-		go c.showListDebtors()
+		c.showListDebtors()
 	case cmd == c.Commands.Leave:
-		go c.leave()
+		c.leave()
 	case cmd == c.Commands.LeaveYes:
-		go c.leaveYes()
+		c.leaveYes()
 	case historyPat.MatchString(cmd): //история списаний
-		go func() {
+		func() {
 			id, err := strconv.Atoi(strings.ReplaceAll(cmd, c.Commands.History, ""))
 			if err != nil {
 				c.writeToLog("CommandSwitcher/historyPat", err)
@@ -126,7 +109,7 @@ func (c *Chat) CommandSwitcher(query string) bool {
 			c.showHistory(id)
 		}()
 	case setAdminPat.MatchString(cmd): //сменить администратора
-		go func() {
+		func() {
 
 			id, err := strconv.ParseInt(strings.ReplaceAll(cmd, c.Commands.SetAdminYes, ""), 10, 64)
 			if err != nil {
@@ -137,7 +120,7 @@ func (c *Chat) CommandSwitcher(query string) bool {
 			c.setAdminYes(id)
 		}()
 	case deletePat.MatchString(cmd): //удалить пользователя
-		go func() {
+		func() {
 			id, err := strconv.ParseInt(strings.ReplaceAll(cmd, c.Commands.DeleteMemberYes, ""), 10, 64)
 			if err != nil {
 				c.writeToLog("CommandSwitcher/deletePat", err)
@@ -148,7 +131,7 @@ func (c *Chat) CommandSwitcher(query string) bool {
 		}()
 
 	case paymentPat.MatchString(cmd): // оплата
-		go func() {
+		func() {
 			cashCollectionId, err := strconv.Atoi(strings.ReplaceAll(cmd, c.Commands.Payment, ""))
 			if err != nil {
 				c.writeToLog("CommandSwitcher/paymentPat", err)
@@ -158,7 +141,7 @@ func (c *Chat) CommandSwitcher(query string) bool {
 			c.payment(cashCollectionId)
 		}()
 	case acceptPat.MatchString(cmd): // подтверждение оплаты
-		go func() {
+		func() {
 			idTransaction, err := strconv.Atoi(strings.ReplaceAll(cmd, c.Commands.PaymentAccept, ""))
 			if err != nil {
 				c.writeToLog("CommandSwitcher/acceptPat", err)
@@ -168,7 +151,7 @@ func (c *Chat) CommandSwitcher(query string) bool {
 			c.changeStatusOfTransaction(idTransaction, db.StatusPaymentConfirmation)
 		}()
 	case expectationPat.MatchString(cmd): // ожидание оплаты
-		go func() {
+		func() {
 			idTransaction, err := strconv.Atoi(strings.ReplaceAll(cmd, c.Commands.PaymentWait, ""))
 			if err != nil {
 				c.writeToLog("CommandSwitcher/expectationPat", err)
@@ -177,7 +160,7 @@ func (c *Chat) CommandSwitcher(query string) bool {
 			c.changeStatusOfTransaction(idTransaction, db.StatusPaymentExpectation)
 		}()
 	case rejectionPat.MatchString(cmd): // отказ оплаты
-		go func() {
+		func() {
 			idTransaction, err := strconv.Atoi(strings.ReplaceAll(cmd, c.Commands.PaymentReject, ""))
 			if err != nil {
 				c.writeToLog("CommandSwitcher/rejectionPat", err)
@@ -207,7 +190,7 @@ func (c *Chat) startMenu() {
 }
 
 func (c *Chat) showMenu() {
-	ok, err := c.DB.IsMember(c.chatId)
+	ok, err := c.DB.IsMember(c.Ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("showMenu/isMember", err)
 		c.sendAnyError()
@@ -234,14 +217,14 @@ func (c *Chat) showMenu() {
 
 	msg := tgbotapi.NewMessage(c.chatId, "Приветствую! Выберите один из вариантов")
 
-	ok, err = c.DB.IsAdmin(c.chatId)
+	member, err := c.DB.GetInfoAboutMember(c.Ctx, c.chatId)
 	if err != nil {
-		c.writeToLog("showMenu/isAdmin", err)
+		c.writeToLog("showMenu/GetInfoAboutMember", err)
 		c.sendAnyError()
 		return
 	}
 
-	if ok { // если админ, то дополнить меню
+	if member.IsAdmin { // если админ, то дополнить меню
 		menuKeyboard.InlineKeyboard = append(menuKeyboard.InlineKeyboard,
 			tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.CreateCashCollection.Label, c.Buttons.CreateCashCollection.Command),
@@ -261,7 +244,7 @@ func (c *Chat) showMenu() {
 
 // createFund проверяет состоит ли пользователь в другом фонде, если не состоит, то запрашивает подтверждение операции
 func (c *Chat) createFund() {
-	ok, err := c.DB.IsMember(c.chatId)
+	ok, err := c.DB.IsMember(c.Ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("createFund/isMember", err)
 		c.sendAnyError()
@@ -309,13 +292,13 @@ func (c *Chat) CreateFundYes() {
 		return
 	}
 
-	if err = c.DB.CreateFund(tag, sum); err != nil {
+	if err = c.DB.CreateFund(c.Ctx, tag, sum); err != nil {
 		c.writeToLog("CreateFundYes", err)
 		c.sendAnyError()
 		return
 	}
 
-	if err = c.DB.AddMember(db.Member{
+	if err = c.DB.AddMember(c.Ctx, db.Member{
 		ID:      c.chatId,
 		Tag:     tag,
 		IsAdmin: true,
@@ -323,14 +306,14 @@ func (c *Chat) CreateFundYes() {
 		Name:    name,
 	}); err != nil {
 		c.writeToLog("CreateFundYes/AddMember", err)
-		err = c.DB.DeleteFund(tag)
+		err = c.DB.DeleteFund(c.Ctx, tag)
 		c.writeToLog("CreateFundYes/DeleteFund", err)
 		c.sendAnyError()
 		return
 	}
 
 	if err = c.Send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Новый фонд создан успешно! Присоединиться к фонду можно, используя тег: %s \nВнимание! Не показывайте этот тег посторонним людям.", tag))); err != nil {
-		if err = c.DB.DeleteFund(tag); err != nil {
+		if err = c.DB.DeleteFund(c.Ctx, tag); err != nil {
 			c.writeToLog("CreateFundYes/DeleteFund", err)
 		}
 		return
@@ -339,24 +322,24 @@ func (c *Chat) CreateFundYes() {
 }
 
 func (c *Chat) showBalance() {
-	tag, err := c.DB.GetTag(c.chatId)
+	tag, err := c.DB.GetTag(c.Ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("showBalance/getTag", err)
 		c.sendAnyError()
 		return
 	}
-	balance, err := c.DB.ShowBalance(tag)
+	balance, err := c.DB.ShowBalance(c.Ctx, tag)
 	if err != nil {
 		c.writeToLog("showBalance", err)
 		c.sendAnyError()
 		return
 	}
 
-	_ = c.Send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Текущий баланс: %.2f руб", balance)))
+	_ = c.Send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Текущий баланс фонда: %.2f руб", balance)))
 }
 
 func (c *Chat) join() {
-	ok, err := c.DB.IsMember(c.chatId)
+	ok, err := c.DB.IsMember(c.Ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("join/isMember", err)
 		c.sendAnyError()
@@ -381,7 +364,7 @@ func (c *Chat) join() {
 
 	tag := response.Text
 
-	ok, err = c.DB.DoesTagExist(tag)
+	ok, err = c.DB.DoesTagExist(c.Ctx, tag)
 	if err != nil {
 		c.writeToLog("join/doesTagExists", err)
 		c.sendAnyError()
@@ -400,7 +383,7 @@ func (c *Chat) join() {
 		return
 	}
 
-	if err = c.DB.AddMember(db.Member{
+	if err = c.DB.AddMember(c.Ctx, db.Member{
 		ID:      c.chatId,
 		Tag:     tag,
 		IsAdmin: false,
@@ -433,12 +416,12 @@ func (c *Chat) formatListMembers(members []db.Member) tgbotapi.MessageConfig {
 }
 
 func (c *Chat) getListMembers() ([]db.Member, error) {
-	tag, err := c.DB.GetTag(c.chatId)
+	tag, err := c.DB.GetTag(c.Ctx, c.chatId)
 	if err != nil {
 		return []db.Member{}, err
 	}
 
-	return c.DB.GetMembers(tag)
+	return c.DB.GetMembers(c.Ctx, tag)
 }
 
 func (c *Chat) createCashCollection() {
@@ -462,14 +445,14 @@ func (c *Chat) createCashCollection() {
 		return
 	}
 
-	tag, err := c.DB.GetTag(c.chatId)
+	tag, err := c.DB.GetTag(c.Ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("createCashCollection/GetTag", err)
 		c.sendAnyError()
 		return
 	}
 
-	id, err := c.DB.CreateCashCollection(db.CashCollection{
+	id, err := c.DB.CreateCashCollection(c.Ctx, db.CashCollection{
 		Tag:        tag,
 		Sum:        sum,
 		Status:     db.StatusCashCollectionOpen,
@@ -489,13 +472,13 @@ func (c *Chat) createCashCollection() {
 }
 
 func (c *Chat) collectionNotification(idCollection int, tagFund string) {
-	members, err := c.DB.GetMembers(tagFund)
+	members, err := c.DB.GetMembers(c.Ctx, tagFund)
 	if err != nil {
 		c.writeToLog("collectionNotification/GetMembers", err)
 		c.sendAnyError()
 		return
 	}
-	cc, err := c.DB.InfoAboutCashCollection(idCollection)
+	cc, err := c.DB.InfoAboutCashCollection(c.Ctx, idCollection)
 	if err != nil {
 		c.writeToLog("collectionNotification/InfoAboutCashCollection", err)
 		c.sendAnyError()
@@ -516,7 +499,7 @@ func (c *Chat) collectionNotification(idCollection int, tagFund string) {
 }
 
 func (c *Chat) payment(cashCollectionId int) {
-	cc, err := c.DB.InfoAboutCashCollection(cashCollectionId)
+	cc, err := c.DB.InfoAboutCashCollection(c.Ctx, cashCollectionId)
 	if err != nil {
 		c.writeToLog("payment/InfoAboutCashCollection", err)
 		c.sendAnyError()
@@ -536,7 +519,7 @@ func (c *Chat) payment(cashCollectionId int) {
 		return
 	}
 
-	idTransaction, err := c.DB.InsertInTransactions(db.Transaction{
+	idTransaction, err := c.DB.InsertInTransactions(c.Ctx, db.Transaction{
 		CashCollectionID: cashCollectionId,
 		Sum:              sum,
 		Type:             "пополнение",
@@ -557,20 +540,20 @@ func (c *Chat) payment(cashCollectionId int) {
 
 // paymentNotification отправить запрос на подтверждение оплаты администратору
 func (c *Chat) paymentNotification(idTransaction int, sum float64) { //доделать
-	tag, err := c.DB.GetTag(c.chatId)
+	tag, err := c.DB.GetTag(c.Ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("paymentNotification/GetTag", err)
 		c.sendAnyError()
 		return
 	}
-	adminId, err := c.DB.GetAdminFund(tag)
+	adminId, err := c.DB.GetAdminFund(c.Ctx, tag)
 	if err != nil {
 		c.writeToLog("paymentNotification/GetAdminFund", err)
 		c.sendAnyError()
 		return
 	}
 
-	member, err := c.DB.GetInfoAboutMember(c.chatId)
+	member, err := c.DB.GetInfoAboutMember(c.Ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("paymentNotification/GetInfoAboutMember", err)
 		c.sendAnyError()
@@ -593,7 +576,7 @@ func (c *Chat) paymentNotification(idTransaction int, sum float64) { //доде�
 
 // changeStatusOfTransaction изменение статуса транзакции
 func (c *Chat) changeStatusOfTransaction(idTransaction int, status string) {
-	err := c.DB.ChangeStatusTransaction(idTransaction, status)
+	err := c.DB.ChangeStatusTransaction(c.Ctx, idTransaction, status)
 	if err != nil {
 		c.writeToLog("changeStatusOfTransaction", err)
 		c.sendAnyError()
@@ -602,12 +585,12 @@ func (c *Chat) changeStatusOfTransaction(idTransaction int, status string) {
 
 	_ = c.Send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Статус оплаты: %s", status)))
 
-	t, err := c.DB.InfoAboutTransaction(idTransaction)
+	t, err := c.DB.InfoAboutTransaction(c.Ctx, idTransaction)
 	if err != nil {
 		c.writeToLog("changeStatusOfTransaction/InfoAboutTransaction", err)
 	}
 
-	if err = c.DB.UpdateStatusCashCollection(t.CashCollectionID); err != nil {
+	if err = c.DB.UpdateStatusCashCollection(c.Ctx, t.CashCollectionID); err != nil {
 		c.writeToLog("changeStatusOfTransaction/CheckDebtors", err)
 	}
 
@@ -615,7 +598,7 @@ func (c *Chat) changeStatusOfTransaction(idTransaction int, status string) {
 }
 
 func (c *Chat) paymentChangeStatusNotification(idTransaction int) {
-	t, err := c.DB.InfoAboutTransaction(idTransaction)
+	t, err := c.DB.InfoAboutTransaction(c.Ctx, idTransaction)
 	if err != nil {
 		c.writeToLog("paymentChangeStatusNotification", err)
 		c.sendAnyError()
@@ -646,7 +629,7 @@ func (c *Chat) createDebitingFunds() {
 		return
 	}
 
-	tag, err := c.DB.GetTag(c.chatId)
+	tag, err := c.DB.GetTag(c.Ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("createDebitingFunds/GetTag", err)
 		return
@@ -679,7 +662,7 @@ func (c *Chat) createDebitingFunds() {
 		return
 	}
 
-	if ok, err := c.DB.CreateDebitingFunds(db.CashCollection{
+	if ok, err := c.DB.CreateDebitingFunds(c.Ctx, db.CashCollection{
 		Tag:        tag,
 		Sum:        sum,
 		Comment:    fmt.Sprintf("Инициатор: %s", c.username),
@@ -825,7 +808,7 @@ func (c *Chat) newTag() (string, error) {
 
 	tag := string(result)
 
-	ok, err := c.DB.DoesTagExist(tag)
+	ok, err := c.DB.DoesTagExist(c.Ctx, tag)
 	if err != nil || !ok {
 		return tag, err
 	} else {
@@ -839,13 +822,13 @@ func (c *Chat) writeToLog(location string, err error) {
 
 // showListDebtors список должников
 func (c *Chat) showListDebtors() {
-	tag, err := c.DB.GetTag(c.chatId)
+	tag, err := c.DB.GetTag(c.Ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("showListDebtors/GetTag", err)
 		c.sendAnyError()
 	}
 
-	openCollections, err := c.DB.FindCashCollectionByStatus(tag, db.StatusCashCollectionOpen)
+	openCollections, err := c.DB.FindCashCollectionByStatus(c.Ctx, tag, db.StatusCashCollectionOpen)
 	if err != nil {
 		c.writeToLog("showListDebtors/FindCashCollectionByStatus", err)
 		c.sendAnyError()
@@ -863,14 +846,14 @@ func (c *Chat) showListDebtors() {
 
 		strBuilder.WriteString(openCollections[i].Purpose + ":\n")
 
-		debtorsID, err := c.DB.GetDebtorsByCollection(collection.ID)
+		debtorsID, err := c.DB.GetDebtorsByCollection(c.Ctx, collection.ID)
 		if err != nil {
 			c.writeToLog("showListDebtors/GetDebtorsByCollection", err)
 			c.sendAnyError()
 		}
 
 		for j, debtor := range debtorsID {
-			member, err := c.DB.GetInfoAboutMember(debtor)
+			member, err := c.DB.GetInfoAboutMember(c.Ctx, debtor)
 			if err != nil {
 				c.writeToLog("showListDebtors/GetInfoAboutMember", err)
 				c.sendAnyError()
@@ -888,12 +871,10 @@ func (c *Chat) showListDebtors() {
 
 func (c *Chat) DebitingNotification(tag string, sum float64, purpose string, receipt string) error {
 
-	members, err := c.DB.GetMembers(tag)
+	members, err := c.DB.GetMembers(c.Ctx, tag)
 	if err != nil {
 		return err
 	}
-
-	bot := c.GetBot()
 
 	fb, err := c.FTP.ReadFile(receipt)
 	if err != nil {
@@ -907,8 +888,9 @@ func (c *Chat) DebitingNotification(tag string, sum float64, purpose string, rec
 
 	for _, member := range members {
 		if member.ID != c.chatId {
-			_ = c.Send(tgbotapi.NewMessage(member.ID, fmt.Sprintf("Списаны средства\nНазначение: %s\nСумма: %.2f", purpose, sum)))
-			_, _ = bot.Send(tgbotapi.NewDocument(member.ID, doc))
+			document := tgbotapi.NewDocument(member.ID, doc)
+			document.Caption = fmt.Sprintf("Списаны средства\nНазначение: %s\nСумма: %.2f", purpose, sum)
+			_ = c.Send(document)
 		}
 	}
 
@@ -927,20 +909,28 @@ func (c *Chat) deleteMember() {
 		return
 	}
 
-	response, err := c.getResponse(typeOfResponseText)
-	if err != nil {
-		if !errors.Is(err, Close) {
-			c.sendAttemptsExceededError()
-		}
-		return
-	}
-
 	var number int
 
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 5; i++ {
+		response, err := c.getResponse(typeOfResponseText)
+		if err != nil || i == 4 {
+			if !errors.Is(err, Close) {
+				c.sendAttemptsExceededError()
+			}
+			return
+		}
+
 		number, err = strconv.Atoi(response.Text)
 		if err != nil {
 			if err = c.Send(tgbotapi.NewMessage(c.chatId, "Введите число")); err != nil {
+				c.writeToLog("deleteMember/send", err)
+				return
+			}
+			continue
+		}
+
+		if number < 1 || number > len(members) {
+			if err = c.Send(tgbotapi.NewMessage(c.chatId, "Введите корректное число")); err != nil {
 				c.writeToLog("deleteMember/send", err)
 				return
 			}
@@ -982,14 +972,14 @@ func (c *Chat) getMembers() {
 }
 
 func (c *Chat) deleteMemberYes(id int64) {
-	tag, err := c.DB.GetTag(c.chatId)
+	tag, err := c.DB.GetTag(c.Ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("deleteMemberYes/GetTag", err)
 		c.sendAnyError()
 		return
 	}
 
-	if err = c.DB.DeleteMember(tag, id); err != nil {
+	if err = c.DB.DeleteMember(c.Ctx, tag, id); err != nil {
 		c.writeToLog("deleteMemberYes/DeleteMember", err)
 		c.sendAnyError()
 		return
@@ -999,7 +989,7 @@ func (c *Chat) deleteMemberYes(id int64) {
 }
 
 func (c *Chat) leave() {
-	member, err := c.DB.GetInfoAboutMember(c.chatId)
+	member, err := c.DB.GetInfoAboutMember(c.Ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("leave/GetInfoAboutMember", err)
 		c.sendAnyError()
@@ -1033,14 +1023,14 @@ func (c *Chat) leave() {
 }
 
 func (c *Chat) leaveYes() {
-	tag, err := c.DB.GetTag(c.chatId)
+	tag, err := c.DB.GetTag(c.Ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("leaveYes/GetTag", err)
 		c.sendAnyError()
 		return
 	}
 
-	if err = c.DB.DeleteMember(tag, c.chatId); err != nil {
+	if err = c.DB.DeleteMember(c.Ctx, tag, c.chatId); err != nil {
 		c.writeToLog("leaveYes/DeleteMember", err)
 		c.sendAnyError()
 		return
@@ -1051,7 +1041,7 @@ func (c *Chat) leaveYes() {
 }
 
 func (c *Chat) showTag() {
-	tag, err := c.DB.GetTag(c.chatId)
+	tag, err := c.DB.GetTag(c.Ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("showTag/GetTag", err)
 		c.sendAnyError()
@@ -1063,20 +1053,19 @@ func (c *Chat) showTag() {
 }
 
 func (c *Chat) showHistory(page int) {
-	tag, err := c.DB.GetTag(c.chatId)
+	tag, err := c.DB.GetTag(c.Ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("showHistory/GetTag", err)
 		c.sendAnyError()
 		return
 	}
-	list, err := c.DB.History(tag, page)
+	list, err := c.DB.History(c.Ctx, tag, page)
 	if err != nil {
 		c.writeToLog("showHistory", err)
 		c.sendAnyError()
 		return
 	}
 
-	bot := c.GetBot()
 	for _, data := range list {
 		fb, err := c.FTP.ReadFile(data.Receipt)
 		if err != nil {
@@ -1089,9 +1078,9 @@ func (c *Chat) showHistory(page int) {
 			Bytes: fb,
 		}
 
-		_ = c.Send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Назначение: %s\nСумма: %.2f\nДата: %s", data.Purpose, data.Sum, data.Date.Format(layoutDate))))
-
-		_, _ = bot.Send(tgbotapi.NewDocument(c.chatId, doc))
+		document := tgbotapi.NewDocument(c.chatId, doc)
+		document.Caption = fmt.Sprintf("Назначение: %s\nСумма: %.2f\nДата: %s", data.Purpose, data.Sum, data.Date.Format(layoutDate))
+		_ = c.Send(document)
 	}
 
 	switch count := len(list); count {
@@ -1112,13 +1101,13 @@ func (c *Chat) showHistory(page int) {
 }
 
 func (c *Chat) awaitingPayment() {
-	tag, err := c.DB.GetTag(c.chatId)
+	tag, err := c.DB.GetTag(c.Ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("awaitingPayment/GetTag", err)
 		c.sendAnyError()
 	}
 
-	openCollections, err := c.DB.FindCashCollectionByStatus(tag, db.StatusCashCollectionOpen)
+	openCollections, err := c.DB.FindCashCollectionByStatus(c.Ctx, tag, db.StatusCashCollectionOpen)
 	if err != nil {
 		c.writeToLog("awaitingPayment/FindCashCollectionByStatus", err)
 		c.sendAnyError()
@@ -1126,7 +1115,7 @@ func (c *Chat) awaitingPayment() {
 
 	count := 0
 	for _, collection := range openCollections {
-		debtorsID, err := c.DB.GetDebtorsByCollection(collection.ID)
+		debtorsID, err := c.DB.GetDebtorsByCollection(c.Ctx, collection.ID)
 		if err != nil {
 			c.writeToLog("showListDebtors/GetDebtorsByCollection", err)
 			c.sendAnyError()
@@ -1217,14 +1206,14 @@ func (c *Chat) setAdmin() {
 }
 
 func (c *Chat) setAdminYes(id int64) {
-	tag, err := c.DB.GetTag(c.chatId)
+	tag, err := c.DB.GetTag(c.Ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("setAdminYes/GetTag", err)
 		c.sendAnyError()
 		return
 	}
 
-	if ok, err := c.DB.SetAdmin(tag, c.chatId, id); err != nil || !ok {
+	if ok, err := c.DB.SetAdmin(c.Ctx, tag, c.chatId, id); err != nil || !ok {
 		c.writeToLog("setAdminYes", err)
 		c.sendAnyError()
 		return
