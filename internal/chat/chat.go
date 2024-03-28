@@ -80,6 +80,7 @@ func (c *Chat) CommandSwitcher(query string) bool {
 	var acceptPat = regexp.MustCompile(`^accept\d*.`)
 	var deletePat = regexp.MustCompile(`^deleteMemberYes\d*.`)
 	var historyPat = regexp.MustCompile(`^history\d*.`)
+	var setAdminPat = regexp.MustCompile(`^setAdminYes\d*.`)
 
 	switch cmd := query; {
 	case cmd == c.Commands.Start:
@@ -90,6 +91,8 @@ func (c *Chat) CommandSwitcher(query string) bool {
 		go c.showTag()
 	case cmd == c.Commands.CreateFund:
 		go c.createFund()
+	case cmd == c.Commands.SetAdmin:
+		go c.setAdmin()
 	case cmd == c.Commands.Join:
 		go c.join()
 	case cmd == c.Commands.AwaitingPayment:
@@ -122,16 +125,26 @@ func (c *Chat) CommandSwitcher(query string) bool {
 			}
 			c.showHistory(id)
 		}()
+	case setAdminPat.MatchString(cmd): //сменить администратора
+		go func() {
 
+			id, err := strconv.ParseInt(strings.ReplaceAll(cmd, c.Commands.SetAdminYes, ""), 10, 64)
+			if err != nil {
+				c.writeToLog("CommandSwitcher/setAdminPat", err)
+				c.sendAnyError()
+				return
+			}
+			c.setAdminYes(id)
+		}()
 	case deletePat.MatchString(cmd): //удалить пользователя
 		go func() {
-			id, err := strconv.Atoi(strings.ReplaceAll(cmd, c.Commands.DeleteMemberYes, ""))
+			id, err := strconv.ParseInt(strings.ReplaceAll(cmd, c.Commands.DeleteMemberYes, ""), 10, 64)
 			if err != nil {
 				c.writeToLog("CommandSwitcher/deletePat", err)
 				c.sendAnyError()
 				return
 			}
-			c.deleteMemberYes(int64(id))
+			c.deleteMemberYes(id)
 		}()
 
 	case paymentPat.MatchString(cmd): // оплата
@@ -237,7 +250,8 @@ func (c *Chat) showMenu() {
 				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.Members.Label, c.Buttons.Members.Command),
 				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.DebtorList.Label, c.Buttons.DebtorList.Command)),
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.ShowTag.Label, c.Buttons.ShowTag.Command)),
+				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.ShowTag.Label, c.Buttons.ShowTag.Command),
+				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.SetAdmin.Label, c.Buttons.SetAdmin.Command)),
 		)
 	}
 
@@ -401,7 +415,7 @@ func (c *Chat) join() {
 	_ = c.Send(tgbotapi.NewMessage(c.chatId, "Вы успешно присоединились к фонду"))
 }
 
-func (c *Chat) sendListMembers(members []db.Member) error {
+func (c *Chat) formatListMembers(members []db.Member) tgbotapi.MessageConfig {
 	var strBuilder strings.Builder
 
 	strBuilder.WriteString("Список участников:\n")
@@ -415,14 +429,7 @@ func (c *Chat) sendListMembers(members []db.Member) error {
 
 	}
 
-	var numericKeyboard = tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.DeleteMember.Label, c.Buttons.DeleteMember.Command)))
-
-	msg := tgbotapi.NewMessage(c.chatId, strBuilder.String())
-	msg.ReplyMarkup = &numericKeyboard
-
-	return c.Send(msg)
+	return tgbotapi.NewMessage(c.chatId, strBuilder.String())
 }
 
 func (c *Chat) getListMembers() ([]db.Member, error) {
@@ -728,7 +735,6 @@ func (c *Chat) getFloatFromUser(message string) (float64, error) {
 
 	for i := 0; i < 3; i++ {
 		answer, err := c.getResponse(typeOfResponseText)
-
 		if err != nil {
 			return sum, err
 		}
@@ -923,7 +929,9 @@ func (c *Chat) deleteMember() {
 
 	response, err := c.getResponse(typeOfResponseText)
 	if err != nil {
-		c.writeToLog("deleteMember/getResponse", err)
+		if !errors.Is(err, Close) {
+			c.sendAttemptsExceededError()
+		}
 		return
 	}
 
@@ -946,7 +954,7 @@ func (c *Chat) deleteMember() {
 	var yesNoKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.DeleteMemberYes.Label, c.Buttons.DeleteMemberYes.Command+strconv.FormatInt(members[number-1].ID, 10)),
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.DeleteMemberNo.Label, c.Buttons.DeleteMemberNo.Command),
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.No.Label, c.Buttons.No.Command),
 		),
 	)
 
@@ -963,7 +971,14 @@ func (c *Chat) getMembers() {
 		return
 	}
 
-	_ = c.sendListMembers(members)
+	msg := c.formatListMembers(members)
+
+	var numericKeyboard = tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.DeleteMember.Label, c.Buttons.DeleteMember.Command)))
+	msg.ReplyMarkup = &numericKeyboard
+
+	_ = c.Send(msg)
 }
 
 func (c *Chat) deleteMemberYes(id int64) {
@@ -992,7 +1007,15 @@ func (c *Chat) leave() {
 	}
 
 	if member.IsAdmin {
-		_ = c.Send(tgbotapi.NewMessage(c.chatId, "Вы являетесь администратором и не можете покинуть фонд"))
+		msg := tgbotapi.NewMessage(c.chatId, "Вы являетесь администратором и не можете покинуть фонд")
+		var setAdminKeyboard = tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.SetAdmin.Label, c.Buttons.SetAdmin.Command),
+			),
+		)
+
+		msg.ReplyMarkup = &setAdminKeyboard
+		_ = c.Send(msg)
 		return
 	}
 
@@ -1001,7 +1024,7 @@ func (c *Chat) leave() {
 	var yesNoKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.LeaveYes.Label, c.Buttons.LeaveYes.Command),
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.LeaveNo.Label, c.Buttons.LeaveNo.Command),
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.No.Label, c.Buttons.No.Command),
 		),
 	)
 
@@ -1132,4 +1155,86 @@ func (c *Chat) awaitingPayment() {
 		_ = c.Send(tgbotapi.NewMessage(c.chatId, "Задолженностей нет"))
 	}
 
+}
+
+func (c *Chat) setAdmin() {
+	members, err := c.getListMembers()
+	if err != nil {
+		c.writeToLog("setAdmin/getListMembers", err)
+		c.sendAnyError()
+		return
+	}
+
+	msg := c.formatListMembers(members)
+
+	if err = c.Send(msg); err != nil {
+		c.writeToLog("setAdmin/Send", err)
+		return
+	}
+
+	if err = c.Send(tgbotapi.NewMessage(c.chatId, "Введите номер участника, которого вы хотите назначить администратором")); err != nil {
+		c.writeToLog("setAdmin/Send", err)
+		return
+	}
+
+	response, err := c.getResponse(typeOfResponseText)
+	if err != nil {
+		if !errors.Is(err, Close) {
+			c.sendAttemptsExceededError()
+		}
+		return
+	}
+
+	var number int
+
+	for i := 0; i < 3; i++ {
+		number, err = strconv.Atoi(response.Text)
+		if err != nil {
+			if err = c.Send(tgbotapi.NewMessage(c.chatId, "Введите число")); err != nil {
+				c.writeToLog("setAdmin/send", err)
+				return
+			}
+			continue
+		}
+		break
+	}
+
+	if members[number-1].ID == c.chatId {
+		_ = c.Send(tgbotapi.NewMessage(c.chatId, "Вы уже являетесь администратором"))
+		return
+	}
+	msg.Text = fmt.Sprintf("Вы действительно хотите назначить администратором %s (@%s)?", members[number-1].Name, members[number-1].Login)
+
+	var yesNoKeyboard = tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.SetAdminYes.Label, c.Buttons.SetAdminYes.Command+strconv.FormatInt(members[number-1].ID, 10)),
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.No.Label, c.Buttons.No.Command),
+		),
+	)
+
+	msg.ReplyMarkup = &yesNoKeyboard
+	_ = c.Send(msg)
+}
+
+func (c *Chat) setAdminYes(id int64) {
+	tag, err := c.DB.GetTag(c.chatId)
+	if err != nil {
+		c.writeToLog("setAdminYes/GetTag", err)
+		c.sendAnyError()
+		return
+	}
+
+	if ok, err := c.DB.SetAdmin(tag, c.chatId, id); err != nil || !ok {
+		c.writeToLog("setAdminYes", err)
+		c.sendAnyError()
+		return
+	}
+
+	_ = c.Send(tgbotapi.NewMessage(c.chatId, "Администратор сменен"))
+
+	c.setAdminNotification(id)
+}
+
+func (c *Chat) setAdminNotification(id int64) {
+	_ = c.Send(tgbotapi.NewMessage(id, "Вас назначили администратором"))
 }

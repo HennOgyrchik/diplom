@@ -137,6 +137,137 @@ func (connStr ConnString) DeleteFund(tag string) error {
 	return err
 }
 
+func (connStr ConnString) DeleteMember(tag string, memberId int64) error {
+	db, err := dbConnection(connStr)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("call delete_member($1,$2)")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	_ = stmt.QueryRow(tag, memberId)
+
+	return nil
+}
+
+// GetTag возвращает тег фонда, в котором пользователь находится
+func (connStr ConnString) GetTag(memberId int64) (string, error) {
+	db, err := dbConnection(connStr)
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("select tag from members where member_id=$1")
+	if err != nil {
+		return "", err
+	}
+	defer stmt.Close()
+
+	var tag string
+	err = stmt.QueryRow(memberId).Scan(&tag)
+	return tag, err
+}
+
+func (connStr ConnString) UpdateStatusCashCollection(idCashCollection int) error {
+	db, err := dbConnection(connStr)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("call check_debtors($1)")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	_ = stmt.QueryRow(idCashCollection)
+
+	return nil
+}
+
+func (connStr ConnString) IsMember(memberId int64) (bool, error) {
+	db, err := dbConnection(connStr)
+	if err != nil {
+		return false, err
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("select count(*) from members where member_id=$1")
+	if err != nil {
+		return false, err
+	}
+	defer stmt.Close()
+
+	var count int
+	err = stmt.QueryRow(memberId).Scan(&count)
+
+	if (err != nil) || (count == 0) {
+		return false, err
+	}
+
+	return true, nil
+}
+
+func (connStr ConnString) ChangeStatusTransaction(idTransaction int, status string) error {
+	db, err := dbConnection(connStr)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("update transactions set status = $1 where id= $2")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	_ = stmt.QueryRow(status, idTransaction)
+
+	return nil
+}
+
+func (connStr ConnString) IsAdmin(memberId int64) (bool, error) {
+	db, err := dbConnection(connStr)
+	if err != nil {
+		return false, err
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("select admin from members m  where member_id=$1")
+	if err != nil {
+		return false, err
+	}
+	defer stmt.Close()
+
+	var result bool
+	err = stmt.QueryRow(memberId).Scan(&result)
+	return result, err
+}
+
+func (connStr ConnString) SetAdmin(tag string, old, new int64) (ok bool, err error) {
+	db, err := dbConnection(connStr)
+	if err != nil {
+		return
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("select * from set_admin($1, $2, $3)")
+	if err != nil {
+		return
+	}
+	defer stmt.Close()
+
+	_ = stmt.QueryRow(tag, old, new).Scan(&ok)
+	return
+}
+
 func (connStr ConnString) GetDebtorsByCollection(cashCollectionId int) ([]int64, error) {
 	var members []int64
 
@@ -191,66 +322,6 @@ func (connStr ConnString) AddMember(member Member) error {
 
 	_ = stmt.QueryRow(member.Tag, member.ID, member.IsAdmin, member.Login, member.Name)
 	return err
-}
-
-// GetTag возвращает тег фонда, в котором пользователь находится
-func (connStr ConnString) GetTag(memberId int64) (string, error) {
-	db, err := dbConnection(connStr)
-	if err != nil {
-		return "", err
-	}
-	defer db.Close()
-
-	stmt, err := db.Prepare("select tag from members where member_id=$1")
-	if err != nil {
-		return "", err
-	}
-	defer stmt.Close()
-
-	var tag string
-	err = stmt.QueryRow(memberId).Scan(&tag)
-	return tag, err
-}
-
-func (connStr ConnString) IsMember(memberId int64) (bool, error) {
-	db, err := dbConnection(connStr)
-	if err != nil {
-		return false, err
-	}
-	defer db.Close()
-
-	stmt, err := db.Prepare("select count(*) from members where member_id=$1")
-	if err != nil {
-		return false, err
-	}
-	defer stmt.Close()
-
-	var count int
-	err = stmt.QueryRow(memberId).Scan(&count)
-
-	if (err != nil) || (count == 0) {
-		return false, err
-	}
-
-	return true, nil
-}
-
-func (connStr ConnString) IsAdmin(memberId int64) (bool, error) {
-	db, err := dbConnection(connStr)
-	if err != nil {
-		return false, err
-	}
-	defer db.Close()
-
-	stmt, err := db.Prepare("select admin from members m  where member_id=$1")
-	if err != nil {
-		return false, err
-	}
-	defer stmt.Close()
-
-	var result bool
-	err = stmt.QueryRow(memberId).Scan(&result)
-	return result, err
 }
 
 // GetMembers возвращает список пользователей фонда
@@ -354,24 +425,6 @@ func (connStr ConnString) InfoAboutCashCollection(idCashCollection int) (CashCol
 
 	err = stmt.QueryRow(idCashCollection).Scan(&cc.Tag, &cc.Sum, &cc.Status, &cc.Comment, &cc.CreateDate, &cc.CloseDate, &cc.Purpose)
 	return cc, err
-}
-
-func (connStr ConnString) UpdateStatusCashCollection(idCashCollection int) error {
-	db, err := dbConnection(connStr)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	stmt, err := db.Prepare("call check_debtors($1)")
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	_ = stmt.QueryRow(idCashCollection)
-
-	return nil
 }
 
 func (connStr ConnString) CreateDebitingFunds(cashCollection CashCollection, memberID int64, receipt string) (ok bool, err error) {
@@ -505,40 +558,4 @@ func (connStr ConnString) InsertInTransactions(transaction Transaction) (int, er
 	var id int
 	_ = stmt.QueryRow(transaction.CashCollectionID, transaction.Sum, transaction.Type, transaction.Status, transaction.Receipt, transaction.MemberID, transaction.Date.Format(time.DateOnly)).Scan(&id)
 	return id, nil
-}
-
-func (connStr ConnString) ChangeStatusTransaction(idTransaction int, status string) error {
-	db, err := dbConnection(connStr)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	stmt, err := db.Prepare("update transactions set status = $1 where id= $2")
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	_ = stmt.QueryRow(status, idTransaction)
-
-	return nil
-}
-
-func (connStr ConnString) DeleteMember(tag string, memberId int64) error {
-	db, err := dbConnection(connStr)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	stmt, err := db.Prepare("call delete_member($1,$2)")
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	_ = stmt.QueryRow(tag, memberId)
-
-	return nil
 }
