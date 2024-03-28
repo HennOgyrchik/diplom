@@ -14,6 +14,8 @@ const (
 	StatusPaymentExpectation  = "ожидание"
 	StatusPaymentRejection    = "отказ"
 	StatusCashCollectionOpen  = "открыт"
+	TypeTransactionDebiting   = "списание"
+	NumberEntriesPerPage      = 3
 )
 
 type ConnString string
@@ -417,6 +419,44 @@ func (connStr ConnString) FindCashCollectionByStatus(tag string, status string) 
 		}
 		list = append(list, cc)
 	}
+	return list, nil
+}
+
+type HistoryData struct {
+	Purpose string
+	Sum     float64
+	Date    time.Time
+	Receipt string
+}
+
+func (connStr ConnString) History(tag string, page int) ([]HistoryData, error) {
+	db, err := dbConnection(connStr)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	stmt, err := db.Prepare("select cc.purpose, cc.sum, cc.create_date, t.receipt from cash_collections cc inner join transactions t on cc.id =t.cash_collection_id where t.type = $1 and cc.tag = $2 order by t.cash_collection_id desc limit $3 offset $4")
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Close()
+
+	rows, err := stmt.Query(TypeTransactionDebiting, tag, NumberEntriesPerPage, NumberEntriesPerPage*page)
+	if err != nil {
+		return nil, err
+	}
+
+	var list []HistoryData
+
+	for rows.Next() {
+		var hd HistoryData
+		if err = rows.Scan(&hd.Purpose, &hd.Sum, &hd.Date, &hd.Receipt); err != nil {
+			return list, err
+		}
+		list = append(list, hd)
+	}
+
 	return list, nil
 }
 

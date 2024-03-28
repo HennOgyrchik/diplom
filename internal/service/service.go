@@ -35,7 +35,8 @@ type ButtonList struct {
 	Payment, PaymentConfirmation, PaymentRefusal, PaymentExpected,
 	DeleteMember, DeleteMemberYes, DeleteMemberNo,
 	Leave, LeaveYes, LeaveNo,
-	ShowTag Button
+	ShowTag,
+	History, NextPageHistory Button
 }
 
 type CommandList struct {
@@ -52,7 +53,8 @@ type CommandList struct {
 	ShowListDebtors,
 	DeleteMember, DeleteMemberYes,
 	Leave, LeaveYes,
-	ShowTag string
+	ShowTag,
+	History string
 }
 
 func NewService() (*Service, error) {
@@ -88,6 +90,7 @@ func NewService() (*Service, error) {
 		Leave:                "leave",
 		LeaveYes:             "leaveYes",
 		ShowTag:              "showTag",
+		History:              "history",
 	}
 
 	return &Service{
@@ -120,6 +123,14 @@ func NewService() (*Service, error) {
 			ShowTag: Button{
 				Label:   "Тег",
 				Command: cmds.ShowTag,
+			},
+			History: Button{
+				Label:   "История списаний",
+				Command: cmds.History,
+			},
+			NextPageHistory: Button{
+				Label:   "Далее",
+				Command: cmds.History,
 			},
 			AwaitingPayment: Button{
 				Label:   "Оплатить",

@@ -20,6 +20,7 @@ const (
 	alphabet                 = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	typeOfResponseText       = "text"
 	typeOfResponseAttachment = "attachment"
+	layoutDate               = "02.01.2006"
 )
 
 type Chat struct {
@@ -78,6 +79,7 @@ func (c *Chat) CommandSwitcher(query string) bool {
 	var expectationPat = regexp.MustCompile(`^wait\d*.`)
 	var acceptPat = regexp.MustCompile(`^accept\d*.`)
 	var deletePat = regexp.MustCompile(`^deleteMemberYes\d*.`)
+	var historyPat = regexp.MustCompile(`^history\d*.`)
 
 	switch cmd := query; {
 	case cmd == c.Commands.Start:
@@ -108,6 +110,17 @@ func (c *Chat) CommandSwitcher(query string) bool {
 		go c.leave()
 	case cmd == c.Commands.LeaveYes:
 		go c.leaveYes()
+	case historyPat.MatchString(cmd): //история списаний
+		go func() {
+			id, err := strconv.Atoi(strings.ReplaceAll(cmd, c.Commands.History, ""))
+			if err != nil {
+				c.writeToLog("CommandSwitcher/historyPat", err)
+				c.sendAnyError()
+				return
+			}
+			c.showHistory(id)
+		}()
+
 	case deletePat.MatchString(cmd): //удалить пользователя
 		go func() {
 			id, err := strconv.Atoi(strings.ReplaceAll(cmd, c.Commands.DeleteMemberYes, ""))
@@ -199,7 +212,8 @@ func (c *Chat) showMenu() {
 			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.AwaitingPayment.Label, c.Buttons.AwaitingPayment.Command),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.Leave.Label, c.Buttons.Leave.Command), // реализовать и передвинуть
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.History.Label, c.Buttons.History.Command+strconv.Itoa(0)),
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.Leave.Label, c.Buttons.Leave.Command),
 		),
 	)
 
@@ -874,6 +888,10 @@ func (c *Chat) DebitingNotification(tag string, sum float64, purpose string, rec
 	bot := c.GetBot()
 
 	fb, err := c.FTP.ReadFile(receipt)
+	if err != nil {
+		return err
+	}
+
 	doc := tgbotapi.FileBytes{
 		Name:  receipt,
 		Bytes: fb,
@@ -902,6 +920,10 @@ func (c *Chat) deleteMember() {
 	}
 
 	response, err := c.getResponse(typeOfResponseText)
+	if err != nil {
+		c.writeToLog("deleteMember/getResponse", err)
+		return
+	}
 
 	var number int
 
@@ -1012,5 +1034,54 @@ func (c *Chat) showTag() {
 	}
 
 	_ = c.Send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Тег фонда: %s", tag)))
+
+}
+
+func (c *Chat) showHistory(page int) {
+	tag, err := c.DB.GetTag(c.chatId)
+	if err != nil {
+		c.writeToLog("showHistory/GetTag", err)
+		c.sendAnyError()
+		return
+	}
+	list, err := c.DB.History(tag, page)
+	if err != nil {
+		c.writeToLog("showHistory", err)
+		c.sendAnyError()
+		return
+	}
+
+	bot := c.GetBot()
+	for _, data := range list {
+		fb, err := c.FTP.ReadFile(data.Receipt)
+		if err != nil {
+			c.writeToLog("showHistory/ReadFile", err)
+			c.sendAnyError()
+			return
+		}
+		doc := tgbotapi.FileBytes{
+			Name:  data.Receipt,
+			Bytes: fb,
+		}
+
+		_ = c.Send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Цель: %s\nСумма: %.2f\nДата: %s", data.Purpose, data.Sum, data.Date.Format(layoutDate))))
+
+		_, _ = bot.Send(tgbotapi.NewDocument(c.chatId, doc))
+	}
+
+	switch count := len(list); count {
+	case db.NumberEntriesPerPage:
+		msg := tgbotapi.NewMessage(c.chatId, "Показать предыдущие?")
+
+		var nextKeyboard = tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.NextPageHistory.Label, c.Buttons.NextPageHistory.Command+strconv.Itoa(page+1))),
+		)
+
+		msg.ReplyMarkup = &nextKeyboard
+		_ = c.Send(msg)
+	default:
+		_ = c.Send(tgbotapi.NewMessage(c.chatId, "Больше списаний нет"))
+	}
 
 }
