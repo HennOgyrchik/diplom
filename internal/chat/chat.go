@@ -92,6 +92,8 @@ func (c *Chat) CommandSwitcher(query string) bool {
 		go c.createFund()
 	case cmd == c.Commands.Join:
 		go c.join()
+	case cmd == c.Commands.AwaitingPayment:
+		go c.awaitingPayment()
 	case cmd == c.Commands.CreateFundYes:
 		go c.CreateFundYes()
 	case cmd == c.Commands.ShowBalance:
@@ -899,7 +901,7 @@ func (c *Chat) DebitingNotification(tag string, sum float64, purpose string, rec
 
 	for _, member := range members {
 		if member.ID != c.chatId {
-			_ = c.Send(tgbotapi.NewMessage(member.ID, fmt.Sprintf("Списаны средства\nЦель: %s\nСумма: %.2f", purpose, sum)))
+			_ = c.Send(tgbotapi.NewMessage(member.ID, fmt.Sprintf("Списаны средства\nНазначение: %s\nСумма: %.2f", purpose, sum)))
 			_, _ = bot.Send(tgbotapi.NewDocument(member.ID, doc))
 		}
 	}
@@ -1064,7 +1066,7 @@ func (c *Chat) showHistory(page int) {
 			Bytes: fb,
 		}
 
-		_ = c.Send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Цель: %s\nСумма: %.2f\nДата: %s", data.Purpose, data.Sum, data.Date.Format(layoutDate))))
+		_ = c.Send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Назначение: %s\nСумма: %.2f\nДата: %s", data.Purpose, data.Sum, data.Date.Format(layoutDate))))
 
 		_, _ = bot.Send(tgbotapi.NewDocument(c.chatId, doc))
 	}
@@ -1082,6 +1084,52 @@ func (c *Chat) showHistory(page int) {
 		_ = c.Send(msg)
 	default:
 		_ = c.Send(tgbotapi.NewMessage(c.chatId, "Больше списаний нет"))
+	}
+
+}
+
+func (c *Chat) awaitingPayment() {
+	tag, err := c.DB.GetTag(c.chatId)
+	if err != nil {
+		c.writeToLog("awaitingPayment/GetTag", err)
+		c.sendAnyError()
+	}
+
+	openCollections, err := c.DB.FindCashCollectionByStatus(tag, db.StatusCashCollectionOpen)
+	if err != nil {
+		c.writeToLog("awaitingPayment/FindCashCollectionByStatus", err)
+		c.sendAnyError()
+	}
+
+	count := 0
+	for _, collection := range openCollections {
+		debtorsID, err := c.DB.GetDebtorsByCollection(collection.ID)
+		if err != nil {
+			c.writeToLog("showListDebtors/GetDebtorsByCollection", err)
+			c.sendAnyError()
+			return
+		}
+
+		for _, debtor := range debtorsID {
+			if debtor == c.chatId {
+				msg := tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Назначение: %s\nСумма: %.2f", collection.Purpose, collection.Sum))
+
+				var paymentKeyboard = tgbotapi.NewInlineKeyboardMarkup(
+					tgbotapi.NewInlineKeyboardRow(
+						tgbotapi.NewInlineKeyboardButtonData(c.Buttons.Payment.Label, c.Buttons.Payment.Command+strconv.Itoa(collection.ID)),
+					),
+				)
+				msg.ReplyMarkup = &paymentKeyboard
+				_ = c.Send(msg)
+				count++
+				continue
+			}
+		}
+
+	}
+
+	if count == 0 {
+		_ = c.Send(tgbotapi.NewMessage(c.chatId, "Задолженностей нет"))
 	}
 
 }

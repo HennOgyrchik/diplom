@@ -54,7 +54,8 @@ type CommandList struct {
 	DeleteMember, DeleteMemberYes,
 	Leave, LeaveYes,
 	ShowTag,
-	History string
+	History,
+	AwaitingPayment string
 }
 
 func NewService() (*Service, error) {
@@ -91,6 +92,7 @@ func NewService() (*Service, error) {
 		LeaveYes:             "leaveYes",
 		ShowTag:              "showTag",
 		History:              "history",
+		AwaitingPayment:      "awaitingPayment",
 	}
 
 	return &Service{
@@ -133,9 +135,9 @@ func NewService() (*Service, error) {
 				Command: cmds.History,
 			},
 			AwaitingPayment: Button{
-				Label:   "Оплатить",
-				Command: "1",
-			}, // TODO реализовать
+				Label:   "Ожидает оплаты",
+				Command: cmds.AwaitingPayment,
+			},
 			Leave: Button{
 				Label:   "Покинуть фонд",
 				Command: cmds.Leave,
