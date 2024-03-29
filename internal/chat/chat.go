@@ -21,6 +21,7 @@ const (
 	typeOfResponseText       = "text"
 	typeOfResponseAttachment = "attachment"
 	layoutDate               = "02.01.2006"
+	currency                 = "руб"
 )
 
 type Chat struct {
@@ -78,6 +79,10 @@ func (c *Chat) CommandSwitcher(query string) bool {
 		c.setAdmin()
 	case cmd == c.Commands.Join:
 		c.join()
+	case cmd == c.Commands.OpenCC:
+		c.openCC()
+	case cmd == c.Commands.ClosedCC:
+		c.closedCC()
 	case cmd == c.Commands.AwaitingPayment:
 		c.awaitingPayment()
 	case cmd == c.Commands.CreateFundYes:
@@ -207,12 +212,13 @@ func (c *Chat) showMenu() {
 	var menuKeyboard = tgbotapi.NewInlineKeyboardMarkup( //меню для обычного пользователя
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.ShowBalance.Label, c.Buttons.ShowBalance.Command),
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.AwaitingPayment.Label, c.Buttons.AwaitingPayment.Command),
-		),
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.AwaitingPayment.Label, c.Buttons.AwaitingPayment.Command)),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.History.Label, c.Buttons.History.Command+strconv.Itoa(0)),
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.Leave.Label, c.Buttons.Leave.Command),
-		),
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.OpenCC.Label, c.Buttons.OpenCC.Command),
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.ClosedCC.Label, c.Buttons.ClosedCC.Command)),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.History.Label, c.Buttons.History.Command+"0"),
+			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.Leave.Label, c.Buttons.Leave.Command)),
 	)
 
 	msg := tgbotapi.NewMessage(c.chatId, "Приветствую! Выберите один из вариантов")
@@ -335,7 +341,7 @@ func (c *Chat) showBalance() {
 		return
 	}
 
-	_ = c.Send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Текущий баланс фонда: %.2f руб", balance)))
+	_ = c.Send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Текущий баланс фонда: %.2f %s", balance, currency)))
 }
 
 func (c *Chat) join() {
@@ -492,7 +498,7 @@ func (c *Chat) collectionNotification(idCollection int, tagFund string) {
 	)
 
 	for _, member := range members {
-		msg := tgbotapi.NewMessage(member.ID, fmt.Sprintf("Иницирован новый сбор.\nСумма к оплате: %.2f\nНазначение: %s", cc.Sum, cc.Purpose))
+		msg := tgbotapi.NewMessage(member.ID, fmt.Sprintf("Иницирован новый сбор.\nСумма к оплате: %.2f %s\nНазначение: %s", cc.Sum, currency, cc.Purpose))
 		msg.ReplyMarkup = &paymentKeyboard
 		_ = c.Send(msg)
 	}
@@ -568,7 +574,7 @@ func (c *Chat) paymentNotification(idTransaction int, sum float64) { //доде�
 		),
 	)
 
-	msg := tgbotapi.NewMessage(adminId, fmt.Sprintf("Подтвердите зачисление средств на счет фонда.\nСумма: %.2f\nОтправитель: %s", sum, member.Name))
+	msg := tgbotapi.NewMessage(adminId, fmt.Sprintf("Подтвердите зачисление средств на счет фонда.\nСумма: %.2f %s\nОтправитель: %s", sum, currency, member.Name))
 	msg.ReplyMarkup = &okKeyboard
 	_ = c.Send(msg)
 
@@ -820,46 +826,28 @@ func (c *Chat) writeToLog(location string, err error) {
 	log.Println(c.chatId, location, err)
 }
 
-// showListDebtors список должников
+// showListDebtors отправляет список должников
 func (c *Chat) showListDebtors() {
-	tag, err := c.DB.GetTag(c.Ctx, c.chatId)
+	debtors, err := c.getListDebtors(db.StatusCashCollectionOpen)
 	if err != nil {
-		c.writeToLog("showListDebtors/GetTag", err)
+		c.writeToLog("showListDebtors/getListDebtors", err)
 		c.sendAnyError()
-	}
-
-	openCollections, err := c.DB.FindCashCollectionByStatus(c.Ctx, tag, db.StatusCashCollectionOpen)
-	if err != nil {
-		c.writeToLog("showListDebtors/FindCashCollectionByStatus", err)
-		c.sendAnyError()
+		return
 	}
 
 	var strBuilder strings.Builder
 
-	if len(openCollections) == 0 {
+	if len(debtors) == 0 {
 		strBuilder.WriteString("Должников нет")
 		_ = c.Send(tgbotapi.NewMessage(c.chatId, strBuilder.String()))
 		return
 	}
 
-	for i, collection := range openCollections {
+	for cc, debtorList := range debtors {
+		strBuilder.WriteString(fmt.Sprintf("%s:\n", cc.Purpose))
 
-		strBuilder.WriteString(openCollections[i].Purpose + ":\n")
-
-		debtorsID, err := c.DB.GetDebtorsByCollection(c.Ctx, collection.ID)
-		if err != nil {
-			c.writeToLog("showListDebtors/GetDebtorsByCollection", err)
-			c.sendAnyError()
-		}
-
-		for j, debtor := range debtorsID {
-			member, err := c.DB.GetInfoAboutMember(c.Ctx, debtor)
-			if err != nil {
-				c.writeToLog("showListDebtors/GetInfoAboutMember", err)
-				c.sendAnyError()
-			}
-
-			strBuilder.WriteString(fmt.Sprintf("%d) %s (@%s)\n", j+1, member.Name, member.Login))
+		for i, debtor := range debtorList {
+			strBuilder.WriteString(fmt.Sprintf("%d) %s (@%s)\n", i+1, debtor.Name, debtor.Login))
 		}
 
 		strBuilder.WriteString("\n")
@@ -867,6 +855,34 @@ func (c *Chat) showListDebtors() {
 	}
 
 	_ = c.Send(tgbotapi.NewMessage(c.chatId, strBuilder.String()))
+}
+
+// getListDebtors возвращает список должников по статусу CashCollection
+func (c *Chat) getListDebtors(status string) (debtors map[db.CashCollection][]db.Member, err error) {
+	tag, err := c.DB.GetTag(c.Ctx, c.chatId)
+	if err != nil {
+		return debtors, fmt.Errorf("GetTag:%w", err)
+	}
+
+	collections, err := c.DB.FindCashCollectionByStatus(c.Ctx, tag, status)
+	if err != nil {
+		return debtors, fmt.Errorf("FindCashCollectionByStatus:%w", err)
+	}
+
+	debtors = make(map[db.CashCollection][]db.Member)
+
+	for _, collection := range collections {
+
+		debtorsByCC, err := c.DB.GetDebtorsByCollection(c.Ctx, collection.ID)
+		if err != nil {
+			return debtors, fmt.Errorf("GetDebtorsByCollection:%w", err)
+		}
+
+		debtors[collection] = debtorsByCC
+
+	}
+	return
+
 }
 
 func (c *Chat) DebitingNotification(tag string, sum float64, purpose string, receipt string) error {
@@ -889,7 +905,7 @@ func (c *Chat) DebitingNotification(tag string, sum float64, purpose string, rec
 	for _, member := range members {
 		if member.ID != c.chatId {
 			document := tgbotapi.NewDocument(member.ID, doc)
-			document.Caption = fmt.Sprintf("Списаны средства\nНазначение: %s\nСумма: %.2f", purpose, sum)
+			document.Caption = fmt.Sprintf("Списаны средства\nНазначение: %s\nСумма: %.2f %s", purpose, sum, currency)
 			_ = c.Send(document)
 		}
 	}
@@ -1079,7 +1095,7 @@ func (c *Chat) showHistory(page int) {
 		}
 
 		document := tgbotapi.NewDocument(c.chatId, doc)
-		document.Caption = fmt.Sprintf("Назначение: %s\nСумма: %.2f\nДата: %s", data.Purpose, data.Sum, data.Date.Format(layoutDate))
+		document.Caption = fmt.Sprintf("Назначение: %s\nСумма: %.2f %s\nДата: %s", data.Purpose, data.Sum, currency, data.Date.Format(layoutDate))
 		_ = c.Send(document)
 	}
 
@@ -1115,16 +1131,16 @@ func (c *Chat) awaitingPayment() {
 
 	count := 0
 	for _, collection := range openCollections {
-		debtorsID, err := c.DB.GetDebtorsByCollection(c.Ctx, collection.ID)
+		debtors, err := c.DB.GetDebtorsByCollection(c.Ctx, collection.ID)
 		if err != nil {
 			c.writeToLog("showListDebtors/GetDebtorsByCollection", err)
 			c.sendAnyError()
 			return
 		}
 
-		for _, debtor := range debtorsID {
-			if debtor == c.chatId {
-				msg := tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Назначение: %s\nСумма: %.2f", collection.Purpose, collection.Sum))
+		for _, debtor := range debtors {
+			if debtor.ID == c.chatId {
+				msg := tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Назначение: %s\nСумма: %.2f %s", collection.Purpose, collection.Sum, currency))
 
 				var paymentKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 					tgbotapi.NewInlineKeyboardRow(
@@ -1226,4 +1242,12 @@ func (c *Chat) setAdminYes(id int64) {
 
 func (c *Chat) setAdminNotification(id int64) {
 	_ = c.Send(tgbotapi.NewMessage(id, "Вас назначили администратором"))
+}
+
+func (c *Chat) openCC() {
+	panic("implement me")
+}
+
+func (c *Chat) closedCC() {
+	panic("implement me")
 }

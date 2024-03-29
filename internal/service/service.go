@@ -4,7 +4,9 @@ import (
 	"context"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"log"
+	"project1/internal/db"
 	"project1/internal/env"
+	"project1/internal/fileStorage"
 	"sync"
 )
 
@@ -14,8 +16,9 @@ type Service struct {
 	waitingList map[int64]chan *tgbotapi.Message
 	Buttons     ButtonList
 	Commands    CommandList
-	*env.Env
-	Ctx context.Context
+	DB          *db.Repository
+	FTP         *fileStorage.FileStorage
+	Ctx         context.Context
 }
 
 type Button struct {
@@ -38,6 +41,7 @@ type ButtonList struct {
 	ShowTag,
 	History, NextPageHistory,
 	SetAdmin, SetAdminYes,
+	OpenCC, ClosedCC,
 	No Button
 }
 
@@ -58,6 +62,7 @@ type CommandList struct {
 	ShowTag,
 	History,
 	AwaitingPayment,
+	OpenCC, ClosedCC,
 	SetAdmin, SetAdminYes string
 }
 
@@ -97,13 +102,16 @@ func NewService(ctx context.Context) (*Service, error) {
 		AwaitingPayment:      "awaitingPayment",
 		SetAdmin:             "setAdmin",
 		SetAdminYes:          "setAdminYes",
+		OpenCC:               "openCC",
+		ClosedCC:             "closedCC",
 	}
 
 	return &Service{
 		bot:         bot,
 		wg:          &sync.RWMutex{},
 		waitingList: make(map[int64]chan *tgbotapi.Message),
-		Env:         e,
+		DB:          e.DB,
+		FTP:         e.FTP,
 		Buttons: ButtonList{
 			CreateFound: Button{
 				Label:   "Создать фонд",
@@ -156,6 +164,14 @@ func NewService(ctx context.Context) (*Service, error) {
 			LeaveYes: Button{
 				Label:   "Да",
 				Command: cmds.LeaveYes,
+			},
+			OpenCC: Button{
+				Label:   "Открытые сборы",
+				Command: cmds.OpenCC,
+			},
+			ClosedCC: Button{
+				Label:   "Закрытые сборы",
+				Command: cmds.ClosedCC,
 			},
 			CreateCashCollection: Button{
 				Label:   "Новый сбор",

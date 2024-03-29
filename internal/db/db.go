@@ -148,8 +148,8 @@ func (r *Repository) SetAdmin(ctx context.Context, tag string, old, new int64) (
 	return
 }
 
-// GetDebtorsByCollection возвращает список memberID, которые не оплатили cashCollectionId
-func (r *Repository) GetDebtorsByCollection(ctx context.Context, cashCollectionId int) (memberID []int64, err error) {
+// GetDebtorsByCollection возвращает []Member, которые не оплатили cashCollectionId
+func (r *Repository) GetDebtorsByCollection(ctx context.Context, cashCollectionId int) (debtors []Member, err error) {
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 
@@ -163,7 +163,12 @@ func (r *Repository) GetDebtorsByCollection(ctx context.Context, cashCollectionI
 		if err = rows.Scan(&id); err != nil {
 			return
 		}
-		memberID = append(memberID, id)
+
+		member, err := r.GetInfoAboutMember(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		debtors = append(debtors, member)
 	}
 
 	return
