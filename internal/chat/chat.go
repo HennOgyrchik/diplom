@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -8,11 +9,12 @@ import (
 	"math/rand"
 	"net/http"
 	"path"
+	"project1/internal/button"
 	"project1/internal/db"
-	"project1/internal/service"
-	"regexp"
+	"project1/internal/fileStorage"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -25,166 +27,116 @@ const (
 )
 
 type Chat struct {
-	username string
-	chatId   int64
-	*service.Service
+	ctx         context.Context
+	username    string
+	chatId      int64
+	bot         *tgbotapi.BotAPI
+	db          *db.Repository
+	ftp         *fileStorage.FileStorage
+	buttons     button.List
+	waitingList map[int64]chan *tgbotapi.Message
+	wg          *sync.RWMutex
+	router      map[string]func(...string)
 }
 
-func NewChat(username string, chatId int64, service *service.Service) *Chat {
-
-	return &Chat{
-		username: username,
-		chatId:   chatId,
-		Service:  service,
+func NewChat(ctx context.Context, username string, chatId int64, bot *tgbotapi.BotAPI, db *db.Repository, ftp *fileStorage.FileStorage, buttons button.List, waitingList map[int64]chan *tgbotapi.Message, wg *sync.RWMutex) *Chat {
+	ch := Chat{
+		ctx:         ctx,
+		username:    username,
+		chatId:      chatId,
+		bot:         bot,
+		db:          db,
+		ftp:         ftp,
+		buttons:     buttons,
+		waitingList: waitingList,
+		wg:          wg,
 	}
+	router := make(map[string]func(...string))
+	router[button.Start] = ch.startMenu
+	router[button.CreateFund] = ch.createFund
+	router[button.CreateFundYes] = ch.createFundYes
+	router[button.Join] = ch.join
+	router[button.ShowBalance] = ch.showBalance
+	router[button.CreateCashCollection] = ch.createCashCollection
+	router[button.CreateDebitingFunds] = ch.createDebitingFunds
+	router[button.Members] = ch.getMembers
+	router[button.Payment] = ch.payment
+	router[button.PaymentAccept] = ch.changeStatusOfTransaction
+	router[button.PaymentReject] = ch.changeStatusOfTransaction
+	router[button.PaymentWait] = ch.changeStatusOfTransaction
+	router[button.Menu] = ch.showMenu
+	router[button.ShowListDebtors] = ch.showListDebtors
+	router[button.DeleteMember] = ch.deleteMember
+	router[button.DeleteMemberYes] = ch.deleteMemberYes
+	router[button.Leave] = ch.leave
+	router[button.LeaveYes] = ch.leaveYes
+	router[button.ShowTag] = ch.showTag
+	router[button.History] = ch.showHistory
+	router[button.AwaitingPayment] = ch.awaitingPayment
+	router[button.SetAdmin] = ch.setAdmin
+	router[button.SetAdminYes] = ch.setAdminYes
+
+	ch.router = router
+	return &ch
 }
 
-func (c *Chat) GetChatId() int64 {
-	return c.chatId
+func (c *Chat) getUserChan(id int64) (chan *tgbotapi.Message, bool) {
+	c.wg.RLock()
+	userChan, ok := c.waitingList[id]
+	c.wg.RUnlock()
+	return userChan, ok
+}
+
+func (c *Chat) waitingResponse() {
+	c.wg.Lock()
+	c.waitingList[c.chatId] = make(chan *tgbotapi.Message)
+	c.wg.Unlock()
+}
+
+func (c *Chat) stopWaiting() {
+	c.wg.Lock()
+	if ch, ok := c.waitingList[c.chatId]; ok {
+		close(ch)
+		delete(c.waitingList, c.chatId)
+	}
+	c.wg.Unlock()
 }
 
 // Send 3 попытки на отправку, иначе удалить из списка ожидания и вернуть ошибку. Возвращает AttemptsExceeded
-func (c *Chat) Send(message tgbotapi.Chattable) error {
+func (c *Chat) Send(data tgbotapi.Chattable) error {
 
 	for i := 0; i < 3; i++ {
-		if _, err := c.Service.GetBot().Send(message); err == nil {
+		_, err := c.bot.Send(data)
+		if err == nil {
 			return nil
 		}
 	}
 
-	c.Service.DeleteFromWaitingList(c.chatId)
-
+	c.stopWaiting()
 	return AttemptsExceeded
 }
 
-func (c *Chat) CommandSwitcher(query string) bool {
-	var paymentPat = regexp.MustCompile(`^payment\d*.`)
-	var rejectionPat = regexp.MustCompile(`^reject\d*.`)
-	var expectationPat = regexp.MustCompile(`^wait\d*.`)
-	var acceptPat = regexp.MustCompile(`^accept\d*.`)
-	var deletePat = regexp.MustCompile(`^deleteMemberYes\d*.`)
-	var historyPat = regexp.MustCompile(`^history\d*.`)
-	var setAdminPat = regexp.MustCompile(`^setAdminYes\d*.`)
+func (c *Chat) CommandRouter(query string) bool {
+	cmd := strings.Split(query, "/")
 
-	switch cmd := query; {
-	case cmd == c.Commands.Start:
-		c.startMenu()
-	case cmd == c.Commands.Menu:
-		c.showMenu()
-	case cmd == c.Commands.ShowTag:
-		c.showTag()
-	case cmd == c.Commands.CreateFund:
-		c.createFund()
-	case cmd == c.Commands.SetAdmin:
-		c.setAdmin()
-	case cmd == c.Commands.Join:
-		c.join()
-	case cmd == c.Commands.OpenCC:
-		c.openCC()
-	case cmd == c.Commands.ClosedCC:
-		c.closedCC()
-	case cmd == c.Commands.AwaitingPayment:
-		c.awaitingPayment()
-	case cmd == c.Commands.CreateFundYes:
-		c.CreateFundYes()
-	case cmd == c.Commands.ShowBalance:
-		c.showBalance()
-	case cmd == c.Commands.DeleteMember:
-		c.deleteMember()
-	case cmd == c.Commands.GetMembers:
-		c.getMembers()
-	case cmd == c.Commands.CreateCashCollection:
-		c.createCashCollection()
-	case cmd == c.Commands.CreateDebitingFunds:
-		c.createDebitingFunds()
-	case cmd == c.Commands.ShowListDebtors:
-		c.showListDebtors()
-	case cmd == c.Commands.Leave:
-		c.leave()
-	case cmd == c.Commands.LeaveYes:
-		c.leaveYes()
-	case historyPat.MatchString(cmd): //история списаний
-		func() {
-			id, err := strconv.Atoi(strings.ReplaceAll(cmd, c.Commands.History, ""))
-			if err != nil {
-				c.writeToLog("CommandSwitcher/historyPat", err)
-				c.sendAnyError()
-				return
-			}
-			c.showHistory(id)
-		}()
-	case setAdminPat.MatchString(cmd): //сменить администратора
-		func() {
-
-			id, err := strconv.ParseInt(strings.ReplaceAll(cmd, c.Commands.SetAdminYes, ""), 10, 64)
-			if err != nil {
-				c.writeToLog("CommandSwitcher/setAdminPat", err)
-				c.sendAnyError()
-				return
-			}
-			c.setAdminYes(id)
-		}()
-	case deletePat.MatchString(cmd): //удалить пользователя
-		func() {
-			id, err := strconv.ParseInt(strings.ReplaceAll(cmd, c.Commands.DeleteMemberYes, ""), 10, 64)
-			if err != nil {
-				c.writeToLog("CommandSwitcher/deletePat", err)
-				c.sendAnyError()
-				return
-			}
-			c.deleteMemberYes(id)
-		}()
-
-	case paymentPat.MatchString(cmd): // оплата
-		func() {
-			cashCollectionId, err := strconv.Atoi(strings.ReplaceAll(cmd, c.Commands.Payment, ""))
-			if err != nil {
-				c.writeToLog("CommandSwitcher/paymentPat", err)
-				c.sendAnyError()
-				return
-			}
-			c.payment(cashCollectionId)
-		}()
-	case acceptPat.MatchString(cmd): // подтверждение оплаты
-		func() {
-			idTransaction, err := strconv.Atoi(strings.ReplaceAll(cmd, c.Commands.PaymentAccept, ""))
-			if err != nil {
-				c.writeToLog("CommandSwitcher/acceptPat", err)
-				c.sendAnyError()
-				return
-			}
-			c.changeStatusOfTransaction(idTransaction, db.StatusPaymentConfirmation)
-		}()
-	case expectationPat.MatchString(cmd): // ожидание оплаты
-		func() {
-			idTransaction, err := strconv.Atoi(strings.ReplaceAll(cmd, c.Commands.PaymentWait, ""))
-			if err != nil {
-				c.writeToLog("CommandSwitcher/expectationPat", err)
-				return
-			}
-			c.changeStatusOfTransaction(idTransaction, db.StatusPaymentExpectation)
-		}()
-	case rejectionPat.MatchString(cmd): // отказ оплаты
-		func() {
-			idTransaction, err := strconv.Atoi(strings.ReplaceAll(cmd, c.Commands.PaymentReject, ""))
-			if err != nil {
-				c.writeToLog("CommandSwitcher/rejectionPat", err)
-				return
-			}
-			c.changeStatusOfTransaction(idTransaction, db.StatusPaymentRejection)
-		}()
-	default:
+	if len(cmd) == 0 {
 		return false
 	}
 
+	f, ok := c.router[cmd[0]]
+	if !ok {
+		return false
+	}
+
+	f(cmd...)
 	return true
 }
 
-func (c *Chat) startMenu() {
+func (c *Chat) startMenu(...string) {
 	var startKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.CreateFound.Label, c.Buttons.CreateFound.Command),
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.Join.Label, c.Buttons.Join.Command),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.CreateFound.Label, c.buttons.CreateFound.Command),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.Join.Label, c.buttons.Join.Command),
 		),
 	)
 
@@ -194,8 +146,8 @@ func (c *Chat) startMenu() {
 	_ = c.Send(msg)
 }
 
-func (c *Chat) showMenu() {
-	ok, err := c.DB.IsMember(c.Ctx, c.chatId)
+func (c *Chat) showMenu(...string) {
+	ok, err := c.db.IsMember(c.ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("showMenu/isMember", err)
 		c.sendAnyError()
@@ -208,49 +160,53 @@ func (c *Chat) showMenu() {
 		c.startMenu()
 		return
 	}
-
-	var menuKeyboard = tgbotapi.NewInlineKeyboardMarkup( //меню для обычного пользователя
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.ShowBalance.Label, c.Buttons.ShowBalance.Command),
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.AwaitingPayment.Label, c.Buttons.AwaitingPayment.Command)),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.OpenCC.Label, c.Buttons.OpenCC.Command),
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.ClosedCC.Label, c.Buttons.ClosedCC.Command)),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.History.Label, c.Buttons.History.Command+"0"),
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.Leave.Label, c.Buttons.Leave.Command)),
-	)
-
 	msg := tgbotapi.NewMessage(c.chatId, "Приветствую! Выберите один из вариантов")
 
-	member, err := c.DB.GetInfoAboutMember(c.Ctx, c.chatId)
+	member, err := c.db.GetInfoAboutMember(c.ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("showMenu/GetInfoAboutMember", err)
 		c.sendAnyError()
 		return
 	}
 
+	var menuKeyboard = tgbotapi.NewInlineKeyboardMarkup( //меню для обычного пользователя
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.ShowBalance.Label, c.buttons.ShowBalance.Command),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.AwaitingPayment.Label, c.buttons.AwaitingPayment.Command),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.History.Label, c.buttons.History.Command+"/0"),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.Leave.Label, c.buttons.Leave.Command),
+		),
+	)
+
 	if member.IsAdmin { // если админ, то дополнить меню
 		menuKeyboard.InlineKeyboard = append(menuKeyboard.InlineKeyboard,
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.CreateCashCollection.Label, c.Buttons.CreateCashCollection.Command),
-				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.CreateDebitingFunds.Label, c.Buttons.CreateDebitingFunds.Command)),
+				tgbotapi.NewInlineKeyboardButtonData(c.buttons.CreateCashCollection.Label, c.buttons.CreateCashCollection.Command),
+				tgbotapi.NewInlineKeyboardButtonData(c.buttons.CreateDebitingFunds.Label, c.buttons.CreateDebitingFunds.Command),
+			),
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.Members.Label, c.Buttons.Members.Command),
-				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.DebtorList.Label, c.Buttons.DebtorList.Command)),
+				tgbotapi.NewInlineKeyboardButtonData(c.buttons.Members.Label, c.buttons.Members.Command),
+				tgbotapi.NewInlineKeyboardButtonData(c.buttons.DebtorList.Label, c.buttons.DebtorList.Command),
+			),
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.ShowTag.Label, c.Buttons.ShowTag.Command),
-				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.SetAdmin.Label, c.Buttons.SetAdmin.Command)),
+				tgbotapi.NewInlineKeyboardButtonData(c.buttons.ShowTag.Label, c.buttons.ShowTag.Command),
+				tgbotapi.NewInlineKeyboardButtonData(c.buttons.SetAdmin.Label, c.buttons.SetAdmin.Command),
+			),
 		)
 	}
 
+	fmt.Println(c.buttons.ShowTag.Label, c.buttons.ShowTag.Command)
 	msg.ReplyMarkup = &menuKeyboard
+
 	_ = c.Send(msg)
+
 }
 
 // createFund проверяет состоит ли пользователь в другом фонде, если не состоит, то запрашивает подтверждение операции
-func (c *Chat) createFund() {
-	ok, err := c.DB.IsMember(c.Ctx, c.chatId)
+func (c *Chat) createFund(...string) {
+	ok, err := c.db.IsMember(c.ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("createFund/isMember", err)
 		c.sendAnyError()
@@ -265,8 +221,8 @@ func (c *Chat) createFund() {
 
 	var numericKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.CreateFoundYes.Label, c.Buttons.CreateFoundYes.Command),
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.CreateFoundNo.Label, c.Buttons.CreateFoundNo.Command),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.CreateFoundYes.Label, c.buttons.CreateFoundYes.Command),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.CreateFoundNo.Label, c.buttons.CreateFoundNo.Command),
 		),
 	)
 	msg.ReplyMarkup = &numericKeyboard
@@ -274,8 +230,8 @@ func (c *Chat) createFund() {
 	_ = c.Send(msg)
 }
 
-// CreateFundYes создает новый фонд
-func (c *Chat) CreateFundYes() {
+// createFundYes создает новый фонд
+func (c *Chat) createFundYes(...string) {
 	sum, err := c.getFloatFromUser("Введите начальную сумму фонда")
 	if err != nil {
 		if !errors.Is(err, Close) {
@@ -286,7 +242,7 @@ func (c *Chat) CreateFundYes() {
 
 	tag, err := c.newTag()
 	if err != nil {
-		c.writeToLog("CreateFundYes/newTag", err)
+		c.writeToLog("createFundYes/newTag", err)
 		c.sendAnyError()
 	}
 
@@ -298,43 +254,43 @@ func (c *Chat) CreateFundYes() {
 		return
 	}
 
-	if err = c.DB.CreateFund(c.Ctx, tag, sum); err != nil {
-		c.writeToLog("CreateFundYes", err)
+	if err = c.db.CreateFund(c.ctx, tag, sum); err != nil {
+		c.writeToLog("createFundYes", err)
 		c.sendAnyError()
 		return
 	}
 
-	if err = c.DB.AddMember(c.Ctx, db.Member{
+	if err = c.db.AddMember(c.ctx, db.Member{
 		ID:      c.chatId,
 		Tag:     tag,
 		IsAdmin: true,
 		Login:   c.username,
 		Name:    name,
 	}); err != nil {
-		c.writeToLog("CreateFundYes/AddMember", err)
-		err = c.DB.DeleteFund(c.Ctx, tag)
-		c.writeToLog("CreateFundYes/DeleteFund", err)
+		c.writeToLog("createFundYes/AddMember", err)
+		err = c.db.DeleteFund(c.ctx, tag)
+		c.writeToLog("createFundYes/DeleteFund", err)
 		c.sendAnyError()
 		return
 	}
 
 	if err = c.Send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Новый фонд создан успешно! Присоединиться к фонду можно, используя тег: %s \nВнимание! Не показывайте этот тег посторонним людям.", tag))); err != nil {
-		if err = c.DB.DeleteFund(c.Ctx, tag); err != nil {
-			c.writeToLog("CreateFundYes/DeleteFund", err)
+		if err = c.db.DeleteFund(c.ctx, tag); err != nil {
+			c.writeToLog("createFundYes/DeleteFund", err)
 		}
 		return
 	}
 
 }
 
-func (c *Chat) showBalance() {
-	tag, err := c.DB.GetTag(c.Ctx, c.chatId)
+func (c *Chat) showBalance(...string) {
+	tag, err := c.db.GetTag(c.ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("showBalance/getTag", err)
 		c.sendAnyError()
 		return
 	}
-	balance, err := c.DB.ShowBalance(c.Ctx, tag)
+	balance, err := c.db.ShowBalance(c.ctx, tag)
 	if err != nil {
 		c.writeToLog("showBalance", err)
 		c.sendAnyError()
@@ -344,8 +300,8 @@ func (c *Chat) showBalance() {
 	_ = c.Send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Текущий баланс фонда: %.2f %s", balance, currency)))
 }
 
-func (c *Chat) join() {
-	ok, err := c.DB.IsMember(c.Ctx, c.chatId)
+func (c *Chat) join(...string) {
+	ok, err := c.db.IsMember(c.ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("join/isMember", err)
 		c.sendAnyError()
@@ -370,7 +326,7 @@ func (c *Chat) join() {
 
 	tag := response.Text
 
-	ok, err = c.DB.DoesTagExist(c.Ctx, tag)
+	ok, err = c.db.DoesTagExist(c.ctx, tag)
 	if err != nil {
 		c.writeToLog("join/doesTagExists", err)
 		c.sendAnyError()
@@ -389,7 +345,7 @@ func (c *Chat) join() {
 		return
 	}
 
-	if err = c.DB.AddMember(c.Ctx, db.Member{
+	if err = c.db.AddMember(c.ctx, db.Member{
 		ID:      c.chatId,
 		Tag:     tag,
 		IsAdmin: false,
@@ -422,15 +378,15 @@ func (c *Chat) formatListMembers(members []db.Member) tgbotapi.MessageConfig {
 }
 
 func (c *Chat) getListMembers() ([]db.Member, error) {
-	tag, err := c.DB.GetTag(c.Ctx, c.chatId)
+	tag, err := c.db.GetTag(c.ctx, c.chatId)
 	if err != nil {
 		return []db.Member{}, err
 	}
 
-	return c.DB.GetMembers(c.Ctx, tag)
+	return c.db.GetMembers(c.ctx, tag)
 }
 
-func (c *Chat) createCashCollection() {
+func (c *Chat) createCashCollection(...string) {
 	sum, err := c.getFloatFromUser("Введите сумму сбора с одного участника")
 	if err != nil {
 		if !errors.Is(err, Close) {
@@ -451,14 +407,14 @@ func (c *Chat) createCashCollection() {
 		return
 	}
 
-	tag, err := c.DB.GetTag(c.Ctx, c.chatId)
+	tag, err := c.db.GetTag(c.ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("createCashCollection/GetTag", err)
 		c.sendAnyError()
 		return
 	}
 
-	id, err := c.DB.CreateCashCollection(c.Ctx, db.CashCollection{
+	id, err := c.db.CreateCashCollection(c.ctx, db.CashCollection{
 		Tag:        tag,
 		Sum:        sum,
 		Status:     db.StatusCashCollectionOpen,
@@ -478,13 +434,13 @@ func (c *Chat) createCashCollection() {
 }
 
 func (c *Chat) collectionNotification(idCollection int, tagFund string) {
-	members, err := c.DB.GetMembers(c.Ctx, tagFund)
+	members, err := c.db.GetMembers(c.ctx, tagFund)
 	if err != nil {
 		c.writeToLog("collectionNotification/GetMembers", err)
 		c.sendAnyError()
 		return
 	}
-	cc, err := c.DB.InfoAboutCashCollection(c.Ctx, idCollection)
+	cc, err := c.db.InfoAboutCashCollection(c.ctx, idCollection)
 	if err != nil {
 		c.writeToLog("collectionNotification/InfoAboutCashCollection", err)
 		c.sendAnyError()
@@ -493,7 +449,7 @@ func (c *Chat) collectionNotification(idCollection int, tagFund string) {
 
 	var paymentKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.Payment.Label, c.Buttons.Payment.Command+strconv.Itoa(idCollection)),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.Payment.Label, c.buttons.Payment.Command+"/"+strconv.Itoa(idCollection)),
 		),
 	)
 
@@ -504,8 +460,15 @@ func (c *Chat) collectionNotification(idCollection int, tagFund string) {
 	}
 }
 
-func (c *Chat) payment(cashCollectionId int) {
-	cc, err := c.DB.InfoAboutCashCollection(c.Ctx, cashCollectionId)
+func (c *Chat) payment(args ...string) {
+	cashCollectionId, err := strconv.Atoi(args[1])
+	if err != nil {
+		c.writeToLog("payment/ParseInt", err)
+		c.sendAnyError()
+		return
+	}
+
+	cc, err := c.db.InfoAboutCashCollection(c.ctx, cashCollectionId)
 	if err != nil {
 		c.writeToLog("payment/InfoAboutCashCollection", err)
 		c.sendAnyError()
@@ -525,7 +488,7 @@ func (c *Chat) payment(cashCollectionId int) {
 		return
 	}
 
-	idTransaction, err := c.DB.InsertInTransactions(c.Ctx, db.Transaction{
+	idTransaction, err := c.db.InsertInTransactions(c.ctx, db.Transaction{
 		CashCollectionID: cashCollectionId,
 		Sum:              sum,
 		Type:             "пополнение",
@@ -546,20 +509,20 @@ func (c *Chat) payment(cashCollectionId int) {
 
 // paymentNotification отправить запрос на подтверждение оплаты администратору
 func (c *Chat) paymentNotification(idTransaction int, sum float64) { //доделать
-	tag, err := c.DB.GetTag(c.Ctx, c.chatId)
+	tag, err := c.db.GetTag(c.ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("paymentNotification/GetTag", err)
 		c.sendAnyError()
 		return
 	}
-	adminId, err := c.DB.GetAdminFund(c.Ctx, tag)
+	adminId, err := c.db.GetAdminFund(c.ctx, tag)
 	if err != nil {
 		c.writeToLog("paymentNotification/GetAdminFund", err)
 		c.sendAnyError()
 		return
 	}
 
-	member, err := c.DB.GetInfoAboutMember(c.Ctx, c.chatId)
+	member, err := c.db.GetInfoAboutMember(c.ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("paymentNotification/GetInfoAboutMember", err)
 		c.sendAnyError()
@@ -568,9 +531,9 @@ func (c *Chat) paymentNotification(idTransaction int, sum float64) { //доде�
 
 	var okKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.PaymentConfirmation.Label, c.Buttons.PaymentConfirmation.Command+strconv.Itoa(idTransaction)),
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.PaymentRefusal.Label, c.Buttons.PaymentRefusal.Command+strconv.Itoa(idTransaction)),
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.PaymentExpected.Label, c.Buttons.PaymentExpected.Command+strconv.Itoa(idTransaction)),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.PaymentConfirmation.Label, fmt.Sprintf("%s/%s/%s", c.buttons.PaymentConfirmation.Command, strconv.Itoa(idTransaction), db.StatusPaymentConfirmation)),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.PaymentRefusal.Label, fmt.Sprintf("%s/%s/%s", c.buttons.PaymentRefusal.Command, strconv.Itoa(idTransaction), db.StatusPaymentRejection)),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.PaymentExpected.Label, fmt.Sprintf("%s/%s/%s", c.buttons.PaymentExpected.Command, strconv.Itoa(idTransaction), db.StatusPaymentExpectation)),
 		),
 	)
 
@@ -581,22 +544,28 @@ func (c *Chat) paymentNotification(idTransaction int, sum float64) { //доде�
 }
 
 // changeStatusOfTransaction изменение статуса транзакции
-func (c *Chat) changeStatusOfTransaction(idTransaction int, status string) {
-	err := c.DB.ChangeStatusTransaction(c.Ctx, idTransaction, status)
+func (c *Chat) changeStatusOfTransaction(args ...string) {
+	idTransaction, err := strconv.Atoi(args[1])
 	if err != nil {
+		c.writeToLog("changeStatusOfTransaction/ParseInt", err)
+		c.sendAnyError()
+		return
+	}
+
+	if err = c.db.ChangeStatusTransaction(c.ctx, idTransaction, args[2]); err != nil {
 		c.writeToLog("changeStatusOfTransaction", err)
 		c.sendAnyError()
 		return
 	}
 
-	_ = c.Send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Статус оплаты: %s", status)))
+	_ = c.Send(tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Статус оплаты: %s", args[2])))
 
-	t, err := c.DB.InfoAboutTransaction(c.Ctx, idTransaction)
+	t, err := c.db.InfoAboutTransaction(c.ctx, idTransaction)
 	if err != nil {
 		c.writeToLog("changeStatusOfTransaction/InfoAboutTransaction", err)
 	}
 
-	if err = c.DB.UpdateStatusCashCollection(c.Ctx, t.CashCollectionID); err != nil {
+	if err = c.db.UpdateStatusCashCollection(c.ctx, t.CashCollectionID); err != nil {
 		c.writeToLog("changeStatusOfTransaction/CheckDebtors", err)
 	}
 
@@ -604,7 +573,7 @@ func (c *Chat) changeStatusOfTransaction(idTransaction int, status string) {
 }
 
 func (c *Chat) paymentChangeStatusNotification(idTransaction int) {
-	t, err := c.DB.InfoAboutTransaction(c.Ctx, idTransaction)
+	t, err := c.db.InfoAboutTransaction(c.ctx, idTransaction)
 	if err != nil {
 		c.writeToLog("paymentChangeStatusNotification", err)
 		c.sendAnyError()
@@ -614,7 +583,7 @@ func (c *Chat) paymentChangeStatusNotification(idTransaction int) {
 	_ = c.Send(tgbotapi.NewMessage(t.MemberID, fmt.Sprintf("Статус оплаты изменен на: %s", t.Status)))
 }
 
-func (c *Chat) createDebitingFunds() {
+func (c *Chat) createDebitingFunds(...string) {
 	sum, err := c.getFloatFromUser("Введите сумму списания")
 	if err != nil {
 		if !errors.Is(err, Close) {
@@ -635,7 +604,7 @@ func (c *Chat) createDebitingFunds() {
 		return
 	}
 
-	tag, err := c.DB.GetTag(c.Ctx, c.chatId)
+	tag, err := c.db.GetTag(c.ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("createDebitingFunds/GetTag", err)
 		return
@@ -668,7 +637,7 @@ func (c *Chat) createDebitingFunds() {
 		return
 	}
 
-	if ok, err := c.DB.CreateDebitingFunds(c.Ctx, db.CashCollection{
+	if ok, err := c.db.CreateDebitingFunds(c.ctx, db.CashCollection{
 		Tag:        tag,
 		Sum:        sum,
 		Comment:    fmt.Sprintf("Инициатор: %s", c.username),
@@ -689,14 +658,12 @@ func (c *Chat) createDebitingFunds() {
 }
 
 func (c *Chat) downloadAttachment(fileId string) (fileName string, err error) {
-	bot := c.Service.GetBot()
-
-	_, err = bot.GetFile(tgbotapi.FileConfig{FileID: fileId})
+	_, err = c.bot.GetFile(tgbotapi.FileConfig{FileID: fileId})
 	if err != nil {
 		return
 	}
 
-	pathFile, err := bot.GetFileDirectURL(fileId)
+	pathFile, err := c.bot.GetFileDirectURL(fileId)
 	if err != nil {
 		return
 	}
@@ -707,7 +674,7 @@ func (c *Chat) downloadAttachment(fileId string) (fileName string, err error) {
 		return
 	}
 
-	fileName, err = c.FTP.StoreFile(path.Ext(pathFile), resp.Body)
+	fileName, err = c.ftp.StoreFile(path.Ext(pathFile), resp.Body)
 	if err != nil {
 		return "", err
 	}
@@ -760,14 +727,14 @@ func (c *Chat) getName() (string, error) {
 
 // getResponse получить ответ от пользователя. typeOfResponse может быть attachment или text. Возвращает AttemptsExceeded
 func (c *Chat) getResponse(typeOfResponse string) (*tgbotapi.Message, error) {
-	c.Service.WaitingResponse(c.chatId)
-	defer c.Service.StopWaiting(c.chatId)
+	c.waitingResponse()
+	defer c.stopWaiting()
 
 	var typeOfMessage string
 	var answer *tgbotapi.Message
 
 	for i := 0; i < 3; i++ {
-		userChan, _ := c.GetUserChan(c.chatId)
+		userChan, _ := c.getUserChan(c.chatId)
 
 		if answer = <-userChan; answer == nil {
 			return answer, Close
@@ -814,7 +781,7 @@ func (c *Chat) newTag() (string, error) {
 
 	tag := string(result)
 
-	ok, err := c.DB.DoesTagExist(c.Ctx, tag)
+	ok, err := c.db.DoesTagExist(c.ctx, tag)
 	if err != nil || !ok {
 		return tag, err
 	} else {
@@ -827,7 +794,7 @@ func (c *Chat) writeToLog(location string, err error) {
 }
 
 // showListDebtors отправляет список должников
-func (c *Chat) showListDebtors() {
+func (c *Chat) showListDebtors(...string) {
 	debtors, err := c.getListDebtors(db.StatusCashCollectionOpen)
 	if err != nil {
 		c.writeToLog("showListDebtors/getListDebtors", err)
@@ -859,12 +826,12 @@ func (c *Chat) showListDebtors() {
 
 // getListDebtors возвращает список должников по статусу CashCollection
 func (c *Chat) getListDebtors(status string) (debtors map[db.CashCollection][]db.Member, err error) {
-	tag, err := c.DB.GetTag(c.Ctx, c.chatId)
+	tag, err := c.db.GetTag(c.ctx, c.chatId)
 	if err != nil {
 		return debtors, fmt.Errorf("GetTag:%w", err)
 	}
 
-	collections, err := c.DB.FindCashCollectionByStatus(c.Ctx, tag, status)
+	collections, err := c.db.FindCashCollectionByStatus(c.ctx, tag, status)
 	if err != nil {
 		return debtors, fmt.Errorf("FindCashCollectionByStatus:%w", err)
 	}
@@ -873,7 +840,7 @@ func (c *Chat) getListDebtors(status string) (debtors map[db.CashCollection][]db
 
 	for _, collection := range collections {
 
-		debtorsByCC, err := c.DB.GetDebtorsByCollection(c.Ctx, collection.ID)
+		debtorsByCC, err := c.db.GetDebtorsByCollection(c.ctx, collection.ID)
 		if err != nil {
 			return debtors, fmt.Errorf("GetDebtorsByCollection:%w", err)
 		}
@@ -887,12 +854,12 @@ func (c *Chat) getListDebtors(status string) (debtors map[db.CashCollection][]db
 
 func (c *Chat) DebitingNotification(tag string, sum float64, purpose string, receipt string) error {
 
-	members, err := c.DB.GetMembers(c.Ctx, tag)
+	members, err := c.db.GetMembers(c.ctx, tag)
 	if err != nil {
 		return err
 	}
 
-	fb, err := c.FTP.ReadFile(receipt)
+	fb, err := c.ftp.ReadFile(receipt)
 	if err != nil {
 		return err
 	}
@@ -907,13 +874,14 @@ func (c *Chat) DebitingNotification(tag string, sum float64, purpose string, rec
 			document := tgbotapi.NewDocument(member.ID, doc)
 			document.Caption = fmt.Sprintf("Списаны средства\nНазначение: %s\nСумма: %.2f %s", purpose, sum, currency)
 			_ = c.Send(document)
+
 		}
 	}
 
 	return nil
 }
 
-func (c *Chat) deleteMember() {
+func (c *Chat) deleteMember(...string) {
 	members, err := c.getListMembers()
 	if err != nil {
 		c.writeToLog("deleteMember/getListMembers", err)
@@ -959,8 +927,8 @@ func (c *Chat) deleteMember() {
 
 	var yesNoKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.DeleteMemberYes.Label, c.Buttons.DeleteMemberYes.Command+strconv.FormatInt(members[number-1].ID, 10)),
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.No.Label, c.Buttons.No.Command),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.DeleteMemberYes.Label, c.buttons.DeleteMemberYes.Command+"/"+strconv.FormatInt(members[number-1].ID, 10)),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.No.Label, c.buttons.No.Command),
 		),
 	)
 
@@ -969,7 +937,7 @@ func (c *Chat) deleteMember() {
 
 }
 
-func (c *Chat) getMembers() {
+func (c *Chat) getMembers(...string) {
 	members, err := c.getListMembers()
 	if err != nil {
 		c.writeToLog("getMembers/getListMembers", err)
@@ -981,21 +949,28 @@ func (c *Chat) getMembers() {
 
 	var numericKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.DeleteMember.Label, c.Buttons.DeleteMember.Command)))
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.DeleteMember.Label, c.buttons.DeleteMember.Command)))
 	msg.ReplyMarkup = &numericKeyboard
 
 	_ = c.Send(msg)
 }
 
-func (c *Chat) deleteMemberYes(id int64) {
-	tag, err := c.DB.GetTag(c.Ctx, c.chatId)
+func (c *Chat) deleteMemberYes(args ...string) {
+	id, err := strconv.ParseInt(args[1], 10, 64)
+	if err != nil {
+		c.writeToLog("deleteMemberYes/ParseInt", err)
+		c.sendAnyError()
+		return
+	}
+
+	tag, err := c.db.GetTag(c.ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("deleteMemberYes/GetTag", err)
 		c.sendAnyError()
 		return
 	}
 
-	if err = c.DB.DeleteMember(c.Ctx, tag, id); err != nil {
+	if err = c.db.DeleteMember(c.ctx, tag, id); err != nil {
 		c.writeToLog("deleteMemberYes/DeleteMember", err)
 		c.sendAnyError()
 		return
@@ -1004,8 +979,8 @@ func (c *Chat) deleteMemberYes(id int64) {
 	_ = c.Send(tgbotapi.NewMessage(c.chatId, "Пользователь удален"))
 }
 
-func (c *Chat) leave() {
-	member, err := c.DB.GetInfoAboutMember(c.Ctx, c.chatId)
+func (c *Chat) leave(...string) {
+	member, err := c.db.GetInfoAboutMember(c.ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("leave/GetInfoAboutMember", err)
 		c.sendAnyError()
@@ -1016,7 +991,7 @@ func (c *Chat) leave() {
 		msg := tgbotapi.NewMessage(c.chatId, "Вы являетесь администратором и не можете покинуть фонд")
 		var setAdminKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.SetAdmin.Label, c.Buttons.SetAdmin.Command),
+				tgbotapi.NewInlineKeyboardButtonData(c.buttons.SetAdmin.Label, c.buttons.SetAdmin.Command),
 			),
 		)
 
@@ -1029,8 +1004,8 @@ func (c *Chat) leave() {
 
 	var yesNoKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.LeaveYes.Label, c.Buttons.LeaveYes.Command),
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.No.Label, c.Buttons.No.Command),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.LeaveYes.Label, c.buttons.LeaveYes.Command),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.No.Label, c.buttons.No.Command),
 		),
 	)
 
@@ -1038,15 +1013,15 @@ func (c *Chat) leave() {
 	_ = c.Send(msg)
 }
 
-func (c *Chat) leaveYes() {
-	tag, err := c.DB.GetTag(c.Ctx, c.chatId)
+func (c *Chat) leaveYes(...string) {
+	tag, err := c.db.GetTag(c.ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("leaveYes/GetTag", err)
 		c.sendAnyError()
 		return
 	}
 
-	if err = c.DB.DeleteMember(c.Ctx, tag, c.chatId); err != nil {
+	if err = c.db.DeleteMember(c.ctx, tag, c.chatId); err != nil {
 		c.writeToLog("leaveYes/DeleteMember", err)
 		c.sendAnyError()
 		return
@@ -1056,8 +1031,8 @@ func (c *Chat) leaveYes() {
 	c.startMenu()
 }
 
-func (c *Chat) showTag() {
-	tag, err := c.DB.GetTag(c.Ctx, c.chatId)
+func (c *Chat) showTag(...string) {
+	tag, err := c.db.GetTag(c.ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("showTag/GetTag", err)
 		c.sendAnyError()
@@ -1068,14 +1043,21 @@ func (c *Chat) showTag() {
 
 }
 
-func (c *Chat) showHistory(page int) {
-	tag, err := c.DB.GetTag(c.Ctx, c.chatId)
+func (c *Chat) showHistory(args ...string) {
+	page, err := strconv.Atoi(args[1])
+	if err != nil {
+		c.writeToLog("showHistory/strconvAtoi", err)
+		c.sendAnyError()
+		return
+	}
+
+	tag, err := c.db.GetTag(c.ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("showHistory/GetTag", err)
 		c.sendAnyError()
 		return
 	}
-	list, err := c.DB.History(c.Ctx, tag, page)
+	list, err := c.db.History(c.ctx, tag, page)
 	if err != nil {
 		c.writeToLog("showHistory", err)
 		c.sendAnyError()
@@ -1083,7 +1065,7 @@ func (c *Chat) showHistory(page int) {
 	}
 
 	for _, data := range list {
-		fb, err := c.FTP.ReadFile(data.Receipt)
+		fb, err := c.ftp.ReadFile(data.Receipt)
 		if err != nil {
 			c.writeToLog("showHistory/ReadFile", err)
 			c.sendAnyError()
@@ -1105,7 +1087,7 @@ func (c *Chat) showHistory(page int) {
 
 		var nextKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData(c.Buttons.NextPageHistory.Label, c.Buttons.NextPageHistory.Command+strconv.Itoa(page+1))),
+				tgbotapi.NewInlineKeyboardButtonData(c.buttons.NextPageHistory.Label, fmt.Sprintf("%s/%d", c.buttons.NextPageHistory.Command, page+1))),
 		)
 
 		msg.ReplyMarkup = &nextKeyboard
@@ -1116,14 +1098,14 @@ func (c *Chat) showHistory(page int) {
 
 }
 
-func (c *Chat) awaitingPayment() {
-	tag, err := c.DB.GetTag(c.Ctx, c.chatId)
+func (c *Chat) awaitingPayment(...string) {
+	tag, err := c.db.GetTag(c.ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("awaitingPayment/GetTag", err)
 		c.sendAnyError()
 	}
 
-	openCollections, err := c.DB.FindCashCollectionByStatus(c.Ctx, tag, db.StatusCashCollectionOpen)
+	openCollections, err := c.db.FindCashCollectionByStatus(c.ctx, tag, db.StatusCashCollectionOpen)
 	if err != nil {
 		c.writeToLog("awaitingPayment/FindCashCollectionByStatus", err)
 		c.sendAnyError()
@@ -1131,7 +1113,7 @@ func (c *Chat) awaitingPayment() {
 
 	count := 0
 	for _, collection := range openCollections {
-		debtors, err := c.DB.GetDebtorsByCollection(c.Ctx, collection.ID)
+		debtors, err := c.db.GetDebtorsByCollection(c.ctx, collection.ID)
 		if err != nil {
 			c.writeToLog("showListDebtors/GetDebtorsByCollection", err)
 			c.sendAnyError()
@@ -1144,7 +1126,7 @@ func (c *Chat) awaitingPayment() {
 
 				var paymentKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 					tgbotapi.NewInlineKeyboardRow(
-						tgbotapi.NewInlineKeyboardButtonData(c.Buttons.Payment.Label, c.Buttons.Payment.Command+strconv.Itoa(collection.ID)),
+						tgbotapi.NewInlineKeyboardButtonData(c.buttons.Payment.Label, fmt.Sprintf("%s/%d", c.buttons.Payment.Command, collection.ID)),
 					),
 				)
 				msg.ReplyMarkup = &paymentKeyboard
@@ -1162,7 +1144,7 @@ func (c *Chat) awaitingPayment() {
 
 }
 
-func (c *Chat) setAdmin() {
+func (c *Chat) setAdmin(...string) {
 	members, err := c.getListMembers()
 	if err != nil {
 		c.writeToLog("setAdmin/getListMembers", err)
@@ -1212,8 +1194,8 @@ func (c *Chat) setAdmin() {
 
 	var yesNoKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.SetAdminYes.Label, c.Buttons.SetAdminYes.Command+strconv.FormatInt(members[number-1].ID, 10)),
-			tgbotapi.NewInlineKeyboardButtonData(c.Buttons.No.Label, c.Buttons.No.Command),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.SetAdminYes.Label, c.buttons.SetAdminYes.Command+"/"+strconv.FormatInt(members[number-1].ID, 10)),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.No.Label, c.buttons.No.Command),
 		),
 	)
 
@@ -1221,15 +1203,22 @@ func (c *Chat) setAdmin() {
 	_ = c.Send(msg)
 }
 
-func (c *Chat) setAdminYes(id int64) {
-	tag, err := c.DB.GetTag(c.Ctx, c.chatId)
+func (c *Chat) setAdminYes(args ...string) {
+	id, err := strconv.ParseInt(args[1], 10, 64)
+	if err != nil {
+		c.writeToLog("setAdminYes/strconvParseInt", err)
+		c.sendAnyError()
+		return
+	}
+
+	tag, err := c.db.GetTag(c.ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("setAdminYes/GetTag", err)
 		c.sendAnyError()
 		return
 	}
 
-	if ok, err := c.DB.SetAdmin(c.Ctx, tag, c.chatId, id); err != nil || !ok {
+	if ok, err := c.db.SetAdmin(c.ctx, tag, c.chatId, id); err != nil || !ok {
 		c.writeToLog("setAdminYes", err)
 		c.sendAnyError()
 		return
@@ -1242,12 +1231,4 @@ func (c *Chat) setAdminYes(id int64) {
 
 func (c *Chat) setAdminNotification(id int64) {
 	_ = c.Send(tgbotapi.NewMessage(id, "Вас назначили администратором"))
-}
-
-func (c *Chat) openCC() {
-	panic("implement me")
-}
-
-func (c *Chat) closedCC() {
-	panic("implement me")
 }
