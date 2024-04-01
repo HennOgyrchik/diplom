@@ -834,12 +834,12 @@ func (c *Chat) showListDebtors(...string) {
 func (c *Chat) getListDebtors(status string) (debtors map[db.CashCollection][]db.Member, err error) {
 	tag, err := c.db.GetTag(c.ctx, c.chatId)
 	if err != nil {
-		return debtors, fmt.Errorf("GetTag:%w", err)
+		return debtors, err
 	}
 
 	collections, err := c.db.FindCashCollectionByStatus(c.ctx, tag, status)
 	if err != nil {
-		return debtors, fmt.Errorf("FindCashCollectionByStatus:%w", err)
+		return debtors, err
 	}
 
 	debtors = make(map[db.CashCollection][]db.Member)
@@ -848,7 +848,7 @@ func (c *Chat) getListDebtors(status string) (debtors map[db.CashCollection][]db
 
 		debtorsByCC, err := c.db.GetDebtorsByCollection(c.ctx, collection.ID)
 		if err != nil {
-			return debtors, fmt.Errorf("GetDebtorsByCollection:%w", err)
+			return debtors, err
 		}
 
 		debtors[collection] = debtorsByCC

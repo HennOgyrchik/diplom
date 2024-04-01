@@ -47,7 +47,7 @@ func NewService(ctx context.Context) (*Service, error) {
 }
 
 func (s *Service) Run() {
-	fmt.Printf("Authorized on account %s", s.bot.Self.UserName)
+	fmt.Printf("Authorized on account %s\n", s.bot.Self.UserName)
 	log.Println("Authorized on account ", s.bot.Self.UserName)
 
 	u := tgbotapi.NewUpdate(0)
