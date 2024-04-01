@@ -137,8 +137,8 @@ func (c *Chat) CommandRouter(query string) bool {
 func (c *Chat) startMenu(...string) {
 	var startKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(c.buttons.CreateFound.Label, c.buttons.CreateFound.Command),
-			tgbotapi.NewInlineKeyboardButtonData(c.buttons.Join.Label, c.buttons.Join.Command),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.CreateFound, button.CreateFund),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.Join, button.Join),
 		),
 	)
 
@@ -173,31 +173,31 @@ func (c *Chat) showMenu(...string) {
 
 	var menuKeyboard = tgbotapi.NewInlineKeyboardMarkup( //меню для обычного пользователя
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(c.buttons.ShowBalance.Label, c.buttons.ShowBalance.Command),
-			tgbotapi.NewInlineKeyboardButtonData(c.buttons.AwaitingPayment.Label, c.buttons.AwaitingPayment.Command),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.ShowBalance, button.ShowBalance),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.AwaitingPayment, button.AwaitingPayment),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(c.buttons.History.Label, c.buttons.History.Command+"/0"),
-			tgbotapi.NewInlineKeyboardButtonData(c.buttons.Leave.Label, c.buttons.Leave.Command),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.History, button.History+"/0"),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.Leave, button.Leave),
 		),
 	)
 
 	if member.IsAdmin { // если админ, то дополнить меню
 		menuKeyboard.InlineKeyboard = append(menuKeyboard.InlineKeyboard,
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData(c.buttons.CreateCashCollection.Label, c.buttons.CreateCashCollection.Command),
-				tgbotapi.NewInlineKeyboardButtonData(c.buttons.CreateDebitingFunds.Label, c.buttons.CreateDebitingFunds.Command),
+				tgbotapi.NewInlineKeyboardButtonData(c.buttons.CreateCashCollection, button.CreateCashCollection),
+				tgbotapi.NewInlineKeyboardButtonData(c.buttons.CreateDebitingFunds, button.CreateDebitingFunds),
 			),
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData(c.buttons.Members.Label, c.buttons.Members.Command),
-				tgbotapi.NewInlineKeyboardButtonData(c.buttons.DebtorList.Label, c.buttons.DebtorList.Command),
+				tgbotapi.NewInlineKeyboardButtonData(c.buttons.Members, button.Members),
+				tgbotapi.NewInlineKeyboardButtonData(c.buttons.DebtorList, button.ShowListDebtors),
 			),
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData(c.buttons.AwaitingConfirmation.Label, c.buttons.AwaitingConfirmation.Command),
-				tgbotapi.NewInlineKeyboardButtonData(c.buttons.ShowTag.Label, c.buttons.ShowTag.Command),
+				tgbotapi.NewInlineKeyboardButtonData(c.buttons.AwaitingConfirmation, button.AwaitingConfirmation),
+				tgbotapi.NewInlineKeyboardButtonData(c.buttons.ShowTag, button.ShowTag),
 			),
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData(c.buttons.SetAdmin.Label, c.buttons.SetAdmin.Command),
+				tgbotapi.NewInlineKeyboardButtonData(c.buttons.SetAdmin, button.SetAdmin),
 			),
 		)
 	}
@@ -225,8 +225,8 @@ func (c *Chat) createFund(...string) {
 
 	var numericKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(c.buttons.CreateFoundYes.Label, c.buttons.CreateFoundYes.Command),
-			tgbotapi.NewInlineKeyboardButtonData(c.buttons.CreateFoundNo.Label, c.buttons.CreateFoundNo.Command),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.Yes, button.CreateFundYes),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.No, button.Start),
 		),
 	)
 	msg.ReplyMarkup = &numericKeyboard
@@ -453,7 +453,7 @@ func (c *Chat) collectionNotification(idCollection int, tagFund string) {
 
 	var paymentKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(c.buttons.Payment.Label, c.buttons.Payment.Command+"/"+strconv.Itoa(idCollection)),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.Payment, button.Payment+"/"+strconv.Itoa(idCollection)),
 		),
 	)
 
@@ -534,9 +534,9 @@ func (c *Chat) paymentNotification(idTransaction int, sum float64) {
 
 	var okKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(c.buttons.PaymentConfirmation.Label, fmt.Sprintf("%s/%s/%s", c.buttons.PaymentConfirmation.Command, strconv.Itoa(idTransaction), db.StatusPaymentConfirmation)),
-			tgbotapi.NewInlineKeyboardButtonData(c.buttons.PaymentRefusal.Label, fmt.Sprintf("%s/%s/%s", c.buttons.PaymentRefusal.Command, strconv.Itoa(idTransaction), db.StatusPaymentRejection)),
-			tgbotapi.NewInlineKeyboardButtonData(c.buttons.PaymentExpected.Label, fmt.Sprintf("%s/%s/%s", c.buttons.PaymentExpected.Command, strconv.Itoa(idTransaction), db.StatusPaymentExpectation)),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.PaymentConfirmation, fmt.Sprintf("%s/%s/%s", button.PaymentAccept, strconv.Itoa(idTransaction), db.StatusPaymentConfirmation)),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.PaymentRefusal, fmt.Sprintf("%s/%s/%s", button.PaymentReject, strconv.Itoa(idTransaction), db.StatusPaymentRejection)),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.PaymentExpected, fmt.Sprintf("%s/%s/%s", button.PaymentWait, strconv.Itoa(idTransaction), db.StatusPaymentExpectation)),
 		),
 	)
 
@@ -933,8 +933,8 @@ func (c *Chat) deleteMember(...string) {
 
 	var yesNoKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(c.buttons.DeleteMemberYes.Label, c.buttons.DeleteMemberYes.Command+"/"+strconv.FormatInt(members[number-1].ID, 10)),
-			tgbotapi.NewInlineKeyboardButtonData(c.buttons.No.Label, c.buttons.No.Command),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.Yes, button.DeleteMemberYes+"/"+strconv.FormatInt(members[number-1].ID, 10)),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.No, button.Menu),
 		),
 	)
 
@@ -955,7 +955,7 @@ func (c *Chat) getMembers(...string) {
 
 	var numericKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(c.buttons.DeleteMember.Label, c.buttons.DeleteMember.Command)))
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.DeleteMember, button.DeleteMember)))
 	msg.ReplyMarkup = &numericKeyboard
 
 	_ = c.Send(msg)
@@ -997,7 +997,7 @@ func (c *Chat) leave(...string) {
 		msg := tgbotapi.NewMessage(c.chatId, "Вы являетесь администратором и не можете покинуть фонд")
 		var setAdminKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData(c.buttons.SetAdmin.Label, c.buttons.SetAdmin.Command),
+				tgbotapi.NewInlineKeyboardButtonData(c.buttons.SetAdmin, button.SetAdmin),
 			),
 		)
 
@@ -1010,8 +1010,8 @@ func (c *Chat) leave(...string) {
 
 	var yesNoKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(c.buttons.LeaveYes.Label, c.buttons.LeaveYes.Command),
-			tgbotapi.NewInlineKeyboardButtonData(c.buttons.No.Label, c.buttons.No.Command),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.Yes, button.LeaveYes),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.No, button.Menu),
 		),
 	)
 
@@ -1093,7 +1093,7 @@ func (c *Chat) showHistory(args ...string) {
 
 		var nextKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData(c.buttons.NextPageHistory.Label, fmt.Sprintf("%s/%d", c.buttons.NextPageHistory.Command, page+1))),
+				tgbotapi.NewInlineKeyboardButtonData(c.buttons.NextPageHistory, fmt.Sprintf("%s/%d", button.History, page+1))),
 		)
 
 		msg.ReplyMarkup = &nextKeyboard
@@ -1132,7 +1132,7 @@ func (c *Chat) awaitingPayment(...string) {
 
 				var paymentKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 					tgbotapi.NewInlineKeyboardRow(
-						tgbotapi.NewInlineKeyboardButtonData(c.buttons.Payment.Label, fmt.Sprintf("%s/%d", c.buttons.Payment.Command, collection.ID)),
+						tgbotapi.NewInlineKeyboardButtonData(c.buttons.Payment, fmt.Sprintf("%s/%d", button.Payment, collection.ID)),
 					),
 				)
 				msg.ReplyMarkup = &paymentKeyboard
@@ -1200,8 +1200,8 @@ func (c *Chat) setAdmin(...string) {
 
 	var yesNoKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData(c.buttons.SetAdminYes.Label, c.buttons.SetAdminYes.Command+"/"+strconv.FormatInt(members[number-1].ID, 10)),
-			tgbotapi.NewInlineKeyboardButtonData(c.buttons.No.Label, c.buttons.No.Command),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.Yes, button.SetAdminYes+"/"+strconv.FormatInt(members[number-1].ID, 10)),
+			tgbotapi.NewInlineKeyboardButtonData(c.buttons.No, button.Menu),
 		),
 	)
 
@@ -1257,9 +1257,9 @@ func (c *Chat) awaitingConfirmation(args ...string) {
 	for _, p := range payments {
 		var okKeyboard = tgbotapi.NewInlineKeyboardMarkup(
 			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData(c.buttons.PaymentConfirmation.Label, fmt.Sprintf("%s/%s/%s", c.buttons.PaymentConfirmation.Command, strconv.Itoa(p.IDTransaction), db.StatusPaymentConfirmation)),
-				tgbotapi.NewInlineKeyboardButtonData(c.buttons.PaymentRefusal.Label, fmt.Sprintf("%s/%s/%s", c.buttons.PaymentRefusal.Command, strconv.Itoa(p.IDTransaction), db.StatusPaymentRejection)),
-				tgbotapi.NewInlineKeyboardButtonData(c.buttons.PaymentExpected.Label, fmt.Sprintf("%s/%s/%s", c.buttons.PaymentExpected.Command, strconv.Itoa(p.IDTransaction), db.StatusPaymentExpectation)),
+				tgbotapi.NewInlineKeyboardButtonData(c.buttons.PaymentConfirmation, fmt.Sprintf("%s/%s/%s", button.PaymentAccept, strconv.Itoa(p.IDTransaction), db.StatusPaymentConfirmation)),
+				tgbotapi.NewInlineKeyboardButtonData(c.buttons.PaymentRefusal, fmt.Sprintf("%s/%s/%s", button.PaymentReject, strconv.Itoa(p.IDTransaction), db.StatusPaymentRejection)),
+				tgbotapi.NewInlineKeyboardButtonData(c.buttons.PaymentExpected, fmt.Sprintf("%s/%s/%s", button.PaymentWait, strconv.Itoa(p.IDTransaction), db.StatusPaymentExpectation)),
 			),
 		)
 
