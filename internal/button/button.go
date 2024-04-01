@@ -24,6 +24,7 @@ const (
 	AwaitingPayment      = "awaitingPayment"
 	SetAdmin             = "setAdmin"
 	SetAdminYes          = "setAdminYes"
+	AwaitingConfirmation = "awaitingConfirmation"
 )
 
 type Button struct {
@@ -35,7 +36,7 @@ type List struct {
 	CreateFound, CreateFoundYes, CreateFoundNo,
 	Join,
 	ShowBalance,
-	AwaitingPayment,
+	AwaitingPayment, AwaitingConfirmation,
 	CreateCashCollection,
 	CreateDebitingFunds,
 	Members,
@@ -95,6 +96,10 @@ func NewButtonList() List {
 		AwaitingPayment: Button{
 			Label:   "Ожидает оплаты",
 			Command: AwaitingPayment,
+		},
+		AwaitingConfirmation: Button{
+			Label:   "Подтверждение оплаты",
+			Command: AwaitingConfirmation,
 		},
 		Leave: Button{
 			Label:   "Покинуть фонд",

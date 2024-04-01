@@ -383,3 +383,44 @@ func (r *Repository) InsertInTransactions(ctx context.Context, transaction Trans
 func (r *Repository) Close() {
 	r.db.Close()
 }
+
+type Payment struct {
+	IDTransaction int
+	Sum           float64
+	Purpose       string
+	Name          string
+}
+
+func (r *Repository) GetTransactionsByStatus(ctx context.Context, tag string, cashCollectionStatus string, transactionStatus string) (list []Payment, err error) {
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
+	defer cancel()
+
+	query := "select t.id, t.sum, cc.purpose, m.name " +
+		"from cash_collections cc inner join transactions t on cc.id = t.cash_collection_id inner join members m on t.member_id = m.member_id" +
+		" where cc.tag = $1 and cc.status = $2 and t.status = $3"
+
+	rows, err := r.db.Query(ctx, query, tag, cashCollectionStatus, transactionStatus)
+	if err != nil {
+		return
+	}
+
+	for rows.Next() {
+		var p Payment
+		if err = rows.Scan(&p.IDTransaction, &p.Sum, &p.Purpose, &p.Name); err != nil {
+			return
+		}
+		list = append(list, p)
+	}
+	return
+
+}
+
+func (r *Repository) GetPaymentByTransactionID(ctx context.Context, trancastionID int) (payment Payment, err error) {
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
+	defer cancel()
+
+	query := "select t.id, t.sum, cc.purpose, m.name from cash_collections cc inner join transactions t on cc.id = t.cash_collection_id inner join members m on t.member_id = m.member_id where t.id = $1"
+
+	err = r.db.QueryRow(ctx, query, trancastionID).Scan(&payment)
+	return
+}

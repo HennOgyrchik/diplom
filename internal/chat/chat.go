@@ -24,6 +24,7 @@ const (
 	typeOfResponseAttachment = "attachment"
 	layoutDate               = "02.01.2006"
 	currency                 = "руб"
+	timeout                  = 5
 )
 
 type Chat struct {
@@ -75,6 +76,7 @@ func NewChat(ctx context.Context, username string, chatId int64, bot *tgbotapi.B
 	router[button.AwaitingPayment] = ch.awaitingPayment
 	router[button.SetAdmin] = ch.setAdmin
 	router[button.SetAdminYes] = ch.setAdminYes
+	router[button.AwaitingConfirmation] = ch.awaitingConfirmation
 
 	ch.router = router
 	return &ch
@@ -191,13 +193,15 @@ func (c *Chat) showMenu(...string) {
 				tgbotapi.NewInlineKeyboardButtonData(c.buttons.DebtorList.Label, c.buttons.DebtorList.Command),
 			),
 			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData(c.buttons.AwaitingConfirmation.Label, c.buttons.AwaitingConfirmation.Command),
 				tgbotapi.NewInlineKeyboardButtonData(c.buttons.ShowTag.Label, c.buttons.ShowTag.Command),
+			),
+			tgbotapi.NewInlineKeyboardRow(
 				tgbotapi.NewInlineKeyboardButtonData(c.buttons.SetAdmin.Label, c.buttons.SetAdmin.Command),
 			),
 		)
 	}
 
-	fmt.Println(c.buttons.ShowTag.Label, c.buttons.ShowTag.Command)
 	msg.ReplyMarkup = &menuKeyboard
 
 	_ = c.Send(msg)
@@ -235,7 +239,7 @@ func (c *Chat) createFundYes(...string) {
 	sum, err := c.getFloatFromUser("Введите начальную сумму фонда")
 	if err != nil {
 		if !errors.Is(err, Close) {
-			c.sendAttemptsExceededError()
+			_ = c.Send(tgbotapi.NewMessage(c.chatId, err.Error()))
 		}
 		return
 	}
@@ -249,7 +253,7 @@ func (c *Chat) createFundYes(...string) {
 	name, err := c.getName()
 	if err != nil {
 		if !errors.Is(err, Close) {
-			c.sendAttemptsExceededError()
+			_ = c.Send(tgbotapi.NewMessage(c.chatId, err.Error()))
 		}
 		return
 	}
@@ -319,7 +323,7 @@ func (c *Chat) join(...string) {
 	response, err := c.getResponse(typeOfResponseText)
 	if err != nil {
 		if !errors.Is(err, Close) {
-			c.sendAttemptsExceededError()
+			_ = c.Send(tgbotapi.NewMessage(c.chatId, err.Error()))
 		}
 		return
 	}
@@ -340,7 +344,7 @@ func (c *Chat) join(...string) {
 	name, err := c.getName()
 	if err != nil {
 		if !errors.Is(err, Close) {
-			c.sendAttemptsExceededError()
+			_ = c.Send(tgbotapi.NewMessage(c.chatId, err.Error()))
 		}
 		return
 	}
@@ -390,7 +394,7 @@ func (c *Chat) createCashCollection(...string) {
 	sum, err := c.getFloatFromUser("Введите сумму сбора с одного участника")
 	if err != nil {
 		if !errors.Is(err, Close) {
-			c.sendAttemptsExceededError()
+			_ = c.Send(tgbotapi.NewMessage(c.chatId, err.Error()))
 		}
 		return
 	}
@@ -402,7 +406,7 @@ func (c *Chat) createCashCollection(...string) {
 	answer, err := c.getResponse(typeOfResponseText)
 	if err != nil {
 		if !errors.Is(err, Close) {
-			c.sendAttemptsExceededError()
+			_ = c.Send(tgbotapi.NewMessage(c.chatId, err.Error()))
 		}
 		return
 	}
@@ -478,7 +482,7 @@ func (c *Chat) payment(args ...string) {
 	sum, err := c.getFloatFromUser("Введите сумму пополнения")
 	if err != nil {
 		if !errors.Is(err, Close) {
-			c.sendAttemptsExceededError()
+			_ = c.Send(tgbotapi.NewMessage(c.chatId, err.Error()))
 		}
 		return
 	}
@@ -508,7 +512,7 @@ func (c *Chat) payment(args ...string) {
 }
 
 // paymentNotification отправить запрос на подтверждение оплаты администратору
-func (c *Chat) paymentNotification(idTransaction int, sum float64) { //доделать
+func (c *Chat) paymentNotification(idTransaction int, sum float64) {
 	tag, err := c.db.GetTag(c.ctx, c.chatId)
 	if err != nil {
 		c.writeToLog("paymentNotification/GetTag", err)
@@ -522,10 +526,9 @@ func (c *Chat) paymentNotification(idTransaction int, sum float64) { //доде�
 		return
 	}
 
-	member, err := c.db.GetInfoAboutMember(c.ctx, c.chatId)
+	payment, err := c.db.GetPaymentByTransactionID(c.ctx, idTransaction)
 	if err != nil {
-		c.writeToLog("paymentNotification/GetInfoAboutMember", err)
-		c.sendAnyError()
+		c.writeToLog("paymentNotification/GetPaymentByTransactionID", err)
 		return
 	}
 
@@ -537,7 +540,7 @@ func (c *Chat) paymentNotification(idTransaction int, sum float64) { //доде�
 		),
 	)
 
-	msg := tgbotapi.NewMessage(adminId, fmt.Sprintf("Подтвердите зачисление средств на счет фонда.\nСумма: %.2f %s\nОтправитель: %s", sum, currency, member.Name))
+	msg := tgbotapi.NewMessage(adminId, fmt.Sprintf("Подтвердите зачисление средств на счет фонда.\nСумма: %.2f %s\nОтправитель: %s\nНазначение: %s", sum, currency, payment.Name, payment.Purpose))
 	msg.ReplyMarkup = &okKeyboard
 	_ = c.Send(msg)
 
@@ -587,7 +590,7 @@ func (c *Chat) createDebitingFunds(...string) {
 	sum, err := c.getFloatFromUser("Введите сумму списания")
 	if err != nil {
 		if !errors.Is(err, Close) {
-			c.sendAttemptsExceededError()
+			_ = c.Send(tgbotapi.NewMessage(c.chatId, err.Error()))
 		}
 		return
 	}
@@ -599,7 +602,7 @@ func (c *Chat) createDebitingFunds(...string) {
 	purpose, err := c.getResponse(typeOfResponseText)
 	if err != nil {
 		if !errors.Is(err, Close) {
-			c.sendAttemptsExceededError()
+			_ = c.Send(tgbotapi.NewMessage(c.chatId, err.Error()))
 		}
 		return
 	}
@@ -617,7 +620,7 @@ func (c *Chat) createDebitingFunds(...string) {
 	attachment, err := c.getResponse(typeOfResponseAttachment)
 	if err != nil {
 		if !errors.Is(err, Close) {
-			c.sendAttemptsExceededError()
+			_ = c.Send(tgbotapi.NewMessage(c.chatId, err.Error()))
 		}
 		return
 	}
@@ -730,13 +733,22 @@ func (c *Chat) getResponse(typeOfResponse string) (*tgbotapi.Message, error) {
 	c.waitingResponse()
 	defer c.stopWaiting()
 
+	ctx, cancel := context.WithTimeout(c.ctx, time.Minute*timeout)
+	defer cancel()
+
 	var typeOfMessage string
 	var answer *tgbotapi.Message
 
 	for i := 0; i < 3; i++ {
 		userChan, _ := c.getUserChan(c.chatId)
 
-		if answer = <-userChan; answer == nil {
+		select {
+		case answer = <-userChan:
+		case <-ctx.Done():
+			return nil, Timeout
+		}
+
+		if answer == nil {
 			return answer, Close
 		}
 
@@ -762,12 +774,6 @@ func (c *Chat) getResponse(typeOfResponse string) (*tgbotapi.Message, error) {
 func (c *Chat) sendAnyError() {
 	if err := c.Send(tgbotapi.NewMessage(c.chatId, "Произошла ошибка. Повторите попытку позже")); err != nil {
 		c.writeToLog("sendError", err)
-	}
-}
-
-func (c *Chat) sendAttemptsExceededError() {
-	if err := c.Send(tgbotapi.NewMessage(c.chatId, "Превышено число попыток ввода")); err != nil {
-		c.writeToLog("sendAttemptsExceededError", err)
 	}
 }
 
@@ -899,7 +905,7 @@ func (c *Chat) deleteMember(...string) {
 		response, err := c.getResponse(typeOfResponseText)
 		if err != nil || i == 4 {
 			if !errors.Is(err, Close) {
-				c.sendAttemptsExceededError()
+				_ = c.Send(tgbotapi.NewMessage(c.chatId, err.Error()))
 			}
 			return
 		}
@@ -1167,7 +1173,7 @@ func (c *Chat) setAdmin(...string) {
 	response, err := c.getResponse(typeOfResponseText)
 	if err != nil {
 		if !errors.Is(err, Close) {
-			c.sendAttemptsExceededError()
+			_ = c.Send(tgbotapi.NewMessage(c.chatId, err.Error()))
 		}
 		return
 	}
@@ -1231,4 +1237,35 @@ func (c *Chat) setAdminYes(args ...string) {
 
 func (c *Chat) setAdminNotification(id int64) {
 	_ = c.Send(tgbotapi.NewMessage(id, "Вас назначили администратором"))
+}
+
+func (c *Chat) awaitingConfirmation(args ...string) {
+
+	tag, err := c.db.GetTag(c.ctx, c.chatId)
+	if err != nil {
+		c.writeToLog("awaitingConfirmation/GetTag", err)
+		return
+	}
+
+	payments, err := c.db.GetTransactionsByStatus(c.ctx, tag, db.StatusCashCollectionOpen, db.StatusPaymentExpectation)
+
+	if len(payments) == 0 {
+		_ = c.Send(tgbotapi.NewMessage(c.chatId, "Нет заявок на подтверждение оплаты"))
+		return
+	}
+
+	for _, p := range payments {
+		var okKeyboard = tgbotapi.NewInlineKeyboardMarkup(
+			tgbotapi.NewInlineKeyboardRow(
+				tgbotapi.NewInlineKeyboardButtonData(c.buttons.PaymentConfirmation.Label, fmt.Sprintf("%s/%s/%s", c.buttons.PaymentConfirmation.Command, strconv.Itoa(p.IDTransaction), db.StatusPaymentConfirmation)),
+				tgbotapi.NewInlineKeyboardButtonData(c.buttons.PaymentRefusal.Label, fmt.Sprintf("%s/%s/%s", c.buttons.PaymentRefusal.Command, strconv.Itoa(p.IDTransaction), db.StatusPaymentRejection)),
+				tgbotapi.NewInlineKeyboardButtonData(c.buttons.PaymentExpected.Label, fmt.Sprintf("%s/%s/%s", c.buttons.PaymentExpected.Command, strconv.Itoa(p.IDTransaction), db.StatusPaymentExpectation)),
+			),
+		)
+
+		msg := tgbotapi.NewMessage(c.chatId, fmt.Sprintf("Подтвердите зачисление средств на счет фонда\nСумма: %.2f %s\nОтправитель: %s\nНазначение: %s", p.Sum, currency, p.Name, p.Purpose))
+		msg.ReplyMarkup = &okKeyboard
+		_ = c.Send(msg)
+	}
+
 }

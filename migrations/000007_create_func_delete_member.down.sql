@@ -1,0 +1,1 @@
+drop procedure if exists delete_member(IN character varying, IN bigint)

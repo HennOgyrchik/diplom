@@ -1,0 +1,1 @@
+DROP PROCEDURE if exists delete_fund(IN character varying);

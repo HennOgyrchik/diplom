@@ -1,0 +1,1 @@
+DROP function if exists set_admin(character varying, bigint, bigint);
