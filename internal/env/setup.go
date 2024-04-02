@@ -6,9 +6,9 @@ import (
 	"github.com/jackc/pgx/v4/pgxpool"
 	"github.com/jlaffaye/ftp"
 	"github.com/sethvargo/go-envconfig"
-	"project1/internal/db"
-	"project1/internal/env/config"
-	"project1/internal/fileStorage"
+	"my_fund/internal/db"
+	"my_fund/internal/env/config"
+	"my_fund/internal/fileStorage"
 )
 
 type Env struct {

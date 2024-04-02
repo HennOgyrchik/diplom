@@ -1,3 +1,5 @@
 *.txt
 .idea
 internal/env/config/conf.json
+Dockerfile
+compose.yaml

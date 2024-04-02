@@ -4,7 +4,6 @@ import (
 	"context"
 	"github.com/jackc/pgx/v4/pgxpool"
 	_ "github.com/lib/pq"
-	_ "regexp"
 	"time"
 )
 

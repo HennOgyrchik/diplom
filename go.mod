@@ -1,4 +1,4 @@
-module project1
+module my_fund
 
 go 1.22
 

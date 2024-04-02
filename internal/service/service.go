@@ -5,11 +5,11 @@ import (
 	"fmt"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"log"
-	"project1/internal/button"
-	"project1/internal/chat"
-	"project1/internal/db"
-	"project1/internal/env"
-	"project1/internal/fileStorage"
+	"my_fund/internal/button"
+	"my_fund/internal/chat"
+	"my_fund/internal/db"
+	"my_fund/internal/env"
+	"my_fund/internal/fileStorage"
 	"sync"
 )
 
