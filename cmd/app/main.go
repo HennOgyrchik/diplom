@@ -29,10 +29,7 @@ func main() {
 	go func() {
 		<-ctx.Done()
 
-		err := srv.Stop()
-		if err != nil {
-			log.Println("Service/Stop: ", err)
-		}
+		srv.Stop()
 
 		if err = file.Close(); err != nil {
 			log.Println("LogFile/Close: ", err)

@@ -19,7 +19,7 @@ type Service struct {
 	waitingList map[int64]chan *tgbotapi.Message
 	Buttons     button.List
 	db          *db.Repository
-	ftp         *fileStorage.FileStorage
+	ftp         fileStorage.FileStorageConfig
 	ctx         context.Context
 }
 
@@ -80,9 +80,10 @@ func (s *Service) handlerUpdate(update tgbotapi.Update) {
 
 		if !ch.CommandRouter(command) { //функция ждет ответ, проверь ответ это команда? Если это так, то она запустится
 			userChan <- message //ответ не команда, отправь полученное сообщение в канал
-			return
+		} else {
+			userChan <- nil
 		}
-		userChan <- nil
+
 		return
 	}
 
@@ -92,9 +93,6 @@ func (s *Service) handlerUpdate(update tgbotapi.Update) {
 
 }
 
-func (s *Service) Stop() error {
-	err := s.ftp.Close()
+func (s *Service) Stop() {
 	s.db.Close()
-
-	return err
 }

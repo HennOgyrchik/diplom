@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/jackc/pgx/v4/pgxpool"
-	"github.com/jlaffaye/ftp"
 	"github.com/sethvargo/go-envconfig"
 	"my_fund/internal/db"
 	"my_fund/internal/env/config"
@@ -13,7 +12,7 @@ import (
 
 type Env struct {
 	DB    *db.Repository
-	FTP   *fileStorage.FileStorage
+	FTP   fileStorage.FileStorageConfig
 	Token string
 }
 
@@ -34,16 +33,7 @@ func Setup(ctx context.Context) (*Env, error) {
 
 	env.DB = db.New(usersDBConn, cfg.Postgres.DBTimeout)
 
-	ftpClient, err := ftp.Dial(cfg.FTP.ConnectionString())
-	if err != nil {
-		return nil, fmt.Errorf("FTP Connect: %w", err)
-	}
-
-	if err = ftpClient.Login(cfg.FTP.User, cfg.FTP.Password); err != nil {
-		return nil, fmt.Errorf("FTP Login: %w", err)
-	}
-
-	env.FTP = fileStorage.New(ftpClient)
+	env.FTP = fileStorage.New(cfg.FTP.ConnectionString(), cfg.FTP.User, cfg.FTP.Password)
 
 	return env, nil
 }

@@ -147,32 +147,6 @@ func (r *Repository) SetAdmin(ctx context.Context, tag string, old, new int64) (
 	return
 }
 
-// GetDebtorsByCollection возвращает []Member, которые не оплатили cashCollectionId
-func (r *Repository) GetDebtorsByCollection(ctx context.Context, cashCollectionId int) (debtors []Member, err error) {
-	ctx, cancel := context.WithTimeout(ctx, r.timeout)
-	defer cancel()
-
-	rows, err := r.db.Query(ctx, "select member_id from members where member_id not in (select member_id from transactions t where t.cash_collection_id = $1 and status = $2)", cashCollectionId, StatusPaymentConfirmation)
-	if err != nil {
-		return
-	}
-
-	for rows.Next() {
-		var id int64
-		if err = rows.Scan(&id); err != nil {
-			return
-		}
-
-		member, err := r.GetInfoAboutMember(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		debtors = append(debtors, member)
-	}
-
-	return
-}
-
 type Member struct {
 	ID      int64
 	Tag     string
@@ -196,7 +170,7 @@ func (r *Repository) GetMembers(ctx context.Context, tag string) (members []Memb
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 
-	rows, err := r.db.Query(ctx, "select member_id, tag, admin, login, name from members where tag =$1", tag)
+	rows, err := r.db.Query(ctx, "select member_id, tag, admin, login, name from members where tag =$1 order by id", tag)
 	if err != nil {
 		return
 	}
@@ -219,6 +193,32 @@ func (r *Repository) GetInfoAboutMember(ctx context.Context, memberId int64) (me
 	member.ID = memberId
 
 	err = r.db.QueryRow(ctx, "select tag,admin,login,name from members where member_id = $1", memberId).Scan(&member.Tag, &member.IsAdmin, &member.Login, &member.Name)
+
+	return
+}
+
+// GetDebtorsByCollection возвращает []Member, которые не оплатили cashCollectionId
+func (r *Repository) GetDebtorsByCollection(ctx context.Context, cashCollectionId int) (debtors []Member, err error) {
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
+	defer cancel()
+
+	rows, err := r.db.Query(ctx, "select member_id from members where member_id not in (select member_id from transactions t where t.cash_collection_id = $1 and status = $2)", cashCollectionId, StatusPaymentConfirmation)
+	if err != nil {
+		return
+	}
+
+	for rows.Next() {
+		var id int64
+		if err = rows.Scan(&id); err != nil {
+			return
+		}
+
+		member, err := r.GetInfoAboutMember(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		debtors = append(debtors, member)
+	}
 
 	return
 }
@@ -390,6 +390,7 @@ type Payment struct {
 	Name          string
 }
 
+// GetTransactionsByStatus возвращает список Payment по статусу транзакции
 func (r *Repository) GetTransactionsByStatus(ctx context.Context, tag string, cashCollectionStatus string, transactionStatus string) (list []Payment, err error) {
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
@@ -420,6 +421,6 @@ func (r *Repository) GetPaymentByTransactionID(ctx context.Context, trancastionI
 
 	query := "select t.id, t.sum, cc.purpose, m.name from cash_collections cc inner join transactions t on cc.id = t.cash_collection_id inner join members m on t.member_id = m.member_id where t.id = $1"
 
-	err = r.db.QueryRow(ctx, query, trancastionID).Scan(&payment)
+	err = r.db.QueryRow(ctx, query, trancastionID).Scan(&payment.IDTransaction, &payment.Sum, &payment.Purpose, &payment.Name)
 	return
 }

@@ -28,7 +28,7 @@ const (
 )
 
 type List struct {
-	CreateFound,
+	CreateFund,
 	Join,
 	ShowBalance,
 	AwaitingPayment, AwaitingConfirmation,
@@ -49,7 +49,7 @@ func NewButtonList() List {
 	return List{
 		Yes:                  "Да",
 		No:                   "Нет",
-		CreateFound:          "Создать фонд",
+		CreateFund:           "Создать фонд",
 		Join:                 "Присоединиться",
 		ShowBalance:          "Баланс",
 		ShowTag:              "Тег",

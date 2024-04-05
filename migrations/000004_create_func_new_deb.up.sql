@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION public.new_deb(tag_f character varying, summa double precision, comnt text, purp text, recpt text, create_d date, memb_id bigint)
+CREATE OR REPLACE FUNCTION new_deb(tag_f character varying, summa double precision, comnt text, purp text, recpt text, create_d date, memb_id bigint)
     RETURNS boolean
     LANGUAGE plpgsql
 AS $function$
