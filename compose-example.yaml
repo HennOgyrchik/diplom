@@ -1,0 +1,44 @@
+version: "3"
+services:
+  postgres:
+    image: "postgres:16"
+    healthcheck:
+      test: [ "CMD", "pg_isready", "-q", "-d", "${DB_NAME}", "-U", "postgres" ]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+    environment:
+      POSTGRES_PASSWORD: "password"
+    volumes:
+      - /data/psql:/var/lib/postgresql/data
+  ftp_server:
+    image: "garethflowers/ftp-server"
+    environment:
+      FTP_PASS: "password"
+      FTP_USER: "login"
+    volumes:
+      - /data/ftp:/home/user
+  my_fund:
+    image: "my_fund:0.1"
+    environment:
+      PSQL_HOST: "postgres"
+      PSQL_PASSWORD: "password"
+      FTP_HOST: "ftp_server"
+      FTP_USER: "login"
+      FTP_PASSWORD: "password"
+      TOKEN: "telegram_token"
+    volumes:
+      - /data/logs:/app/logs
+      - static:/tmp/migrations
+    depends_on:
+      - postgres
+      - ftp_server
+  migration:
+    image: "migrate/migrate:v4.16.0"
+    volumes:
+      - static:/migrations
+    command: ["-path=/migrations", "-database=postgres://postgres:5432/postgres?sslmode=disable&user=postgres&password=password", "up"]
+    depends_on:
+      - postgres
+volumes:
+  static:
