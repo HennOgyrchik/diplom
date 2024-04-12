@@ -13,9 +13,6 @@ services:
       - /data/psql:/var/lib/postgresql/data
   ftp_server:
     image: "garethflowers/ftp-server"
-    environment:
-      FTP_PASS: "password"
-      FTP_USER: "login"
     volumes:
       - /data/ftp:/home/user
   my_fund:
@@ -24,8 +21,8 @@ services:
       PSQL_HOST: "postgres"
       PSQL_PASSWORD: "password"
       FTP_HOST: "ftp_server"
-      FTP_USER: "login"
-      FTP_PASSWORD: "password"
+      FTP_USER: "foo"
+      FTP_PASSWORD: "bar"
       TOKEN: "telegram_token"
     volumes:
       - /data/logs:/app/logs
@@ -39,6 +36,7 @@ services:
       - static:/migrations
     command: ["-path=/migrations", "-database=postgres://postgres:5432/postgres?sslmode=disable&user=postgres&password=password", "up"]
     depends_on:
+      - my_fund
       - postgres
 volumes:
   static:
