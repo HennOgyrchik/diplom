@@ -1,7 +1,7 @@
 # Telegram-бот "Мой фонд"
 ## Сборка и запуск
 ```sh
-git clone https://github.com/HennOgyrchik/diplom.git
+git clone https://github.com/HennOgyrchik/my_fund.git
 cd diplom
 docker build -t my_fund:0.1 .
 docker compose up
